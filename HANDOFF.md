@@ -50,6 +50,8 @@ User report: every 2nd/3rd logoff the char select "reverts to the default" — a
 
 **Known non-fix**: the 1–3 second window right after logoff where the document show is still pending (log gap 26–50 lines) can still flash the native UI — core-side timing, out of our control.
 
+**User screenshot of the same episode** (pasted late, OCR unavailable in harness): left-edge "split" in the UI and the plugin bar (top-left PluginsBar) collapsed/bugged out. Consistent with the reload-storm diagnosis: the PluginsBar is the **Launcher Interface's** own panel, and the log shows its components logging `Element is null, skipping prop update` storms right before each reload cycle — its document/elements were disposed under it mid-render. The left-edge split is the same torn transition (one document layer's decorator still drawing while another is partially disposed). Our character select's rows rebuilt correctly through the whole window — nothing to fix on our side; a full client restart (or 0.1.8's self-heal for the registration part) is the remedy.
+
 **Deployment status (2026-08-30, verified):** 13/13 tests; deployed; DLL probed for `0.1.8`. Going forward: run `deploy.sh` with the client CLOSED, or expect a reload blip (now self-healing).
 
 ## 0.1.7 — multi-character layout fix (2026-08-30)
