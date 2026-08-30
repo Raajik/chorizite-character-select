@@ -19,7 +19,7 @@ public class ScreenStructureTests {
 
         // Two-line world box: name first, then population label.
         Assert.Contains("class = \"world-name\"", rml);
-        Assert.Contains("Population: \" .. state.CurrentConnectionCount", rml);
+        Assert.Contains("\"Population: \" .. (state.Population or \"\")", rml);
         Assert.Matches(@"\.world-name \{[^}]*display: block", rml);
         // The single-line format string from the stock screen is gone.
         Assert.DoesNotContain("%s %d / %d", ReadRml());
