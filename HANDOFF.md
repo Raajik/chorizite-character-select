@@ -4,12 +4,12 @@
 
 Standalone Chorizite **Client-environment** plugin. Replaces the AC plugin's character select screen with an enhanced one (two-line population box, last-known level, allegiance). NOT a launcher plugin; shares nothing with Server Browser.
 
-- Workspace: `A:\ai\projects\chorizite-character-select`
+- Workspace: `A:\ai\projects\chorizite-mods\chorizite-character-select`
 - Product: `CharacterSelect` (manifest id `CharacterSelect`, name "Character Select Plus")
 - Installed to: `C:\Games\Chorizite\plugins\CharacterSelect`
 - Runtime data: `C:\Games\Chorizite\data\CharacterSelect\characters.json`
 - Depends on: AC plugin (`plugins\AC` 0.0.5), Lua 0.0.13, RmlUi 0.0.11, Chorizite 0.0.15 stack.
-- Current version: **0.1.2** (local commits; no GitHub remote yet)
+- Current version: **0.1.2** · GitHub: https://github.com/Raajik/chorizite-character-select (CI on push/PR; tagging `v<manifest version>` publishes a release zip)
 
 ## Validated facts (all from decompiling the installed stack)
 
@@ -48,7 +48,7 @@ Standalone Chorizite **Client-environment** plugin. Replaces the AC plugin's cha
 ## Build, test, deploy
 
 ```bash
-cd A:/ai/projects/chorizite-character-select
+cd A:/ai/projects/chorizite-mods/chorizite-character-select
 ./scripts/deploy.sh                     # tests + build + copy to C:/Games/Chorizite
 CHORIZITE_HOME='D:/Games/Chorizite' ./scripts/deploy.sh
 ```

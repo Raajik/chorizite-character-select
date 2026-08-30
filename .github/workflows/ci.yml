@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    # Windows is the only host Chorizite runs on, but the suite must stay green on
+    # Linux so nothing silently hard-binds to a Windows-only API. The structural
+    # tests read source/assets with Path.Combine, so they are cross-platform.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Test
+        run: dotnet test tests/CharacterSelect.Tests/CharacterSelect.Tests.csproj --configuration Release

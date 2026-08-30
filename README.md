@@ -12,8 +12,8 @@ Repository: `chorizite-character-select` · Product/plugin id: `CharacterSelect`
 
 ## Install
 
-Deploy with `./scripts/deploy.sh` (copies into `C:/Games/Chorizite/plugins/CharacterSelect`). Requires the AC plugin (Client environment).
+Deploy with `./scripts/deploy.sh` (copies into `C:/Games/Chorizite/plugins/CharacterSelect`), or grab the latest zip from [Releases](https://github.com/Raajik/chorizite-character-select/releases) and extract it into `plugins/CharacterSelect`. Requires the AC plugin (Client environment).
 
 ## Status
 
-0.1.0 — first testable build (screen override + login capture with debug logging).
+0.1.2 — screen override, login capture, per-character level + allegiance. CI on push/PR; releases via `v*` tags.
