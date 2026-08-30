@@ -53,6 +53,8 @@ The 0.1.2 user round produced two findings:
 
    Regression coverage: `UiStructureTests.CaptureBridgeBindsTheExactDelegateSignature`.
 
+   **Deployment + release status (2026-08-30, verified):** `2c728a0` is pushed to GitHub; tags `v0.1.2` + `v0.1.3` are live with green CI, and `CharacterSelect-v0.1.3.zip` is published. The deployed DLL at `C:\Games\Chorizite\plugins\CharacterSelect` was byte-verified to contain this fix (UTF-16LE probe for the guard string `player description received but no current character known`), so the only remaining gate for checklist item 1 is a client restart.
+
 ## Known issues / TODO (0.1.3)
 
 1. **Intro skip not wired**: `TrySkipIntro` only logs `UIFlow.m_instance` availability. To implement: call the backend `GameScreen` setter (ACChoriziteBackend line ~72 → `UIFlow.m_instance->QueueUIMode`) with 268435466 once UIFlow exists — e.g. subscribe `ClientBackend.UIBackend.OnScreenChanged` and force the mode when it lands on IntroUI (268435457). Needs the OnScreenChanged hook (AC plugin's ClientBackend_UIBackend pattern).
@@ -66,6 +68,7 @@ The 0.1.2 user round produced two findings:
 - Plugin: every step logged under `[CharacterSelect]` in `C:/Games/Chorizite/data/logs/log.txt` (RegisterScreen result, subscription status, `captured {name} ... level {L} allegiance '{A}'` on login, hook results).
 - Screen: `logDebug()` prints character count, GameScreen enum resolution, SetScreen fallback firing, world info updates.
 - After any confusing test: FIRST verify the deployed DLL contains the latest change (probe the DLL for a new string, UTF-16LE) and that the launcher was restarted; the launcher logs the loaded version only at startup.
+- Reading user screenshots without model vision (goose/Orca harness may omit image blocks): Windows built-in OCR via PowerShell WinRT — `Add-Type -AssemblyName System.Runtime.WindowsRuntime`, load `BitmapDecoder`/`OcrEngine` WinRT types, await `RecognizeAsync`. Working script: `C:\Users\jeremy\AppData\Local\Temp\goose_ocr.ps1` (Temp is ephemeral — recreate from that pattern if gone). Limit: 12–13px UI text is below OCR resolution; crop-zoom or rely on log lines instead.
 
 ## Build, test, deploy
 

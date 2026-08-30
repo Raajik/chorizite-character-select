@@ -16,4 +16,4 @@ Deploy with `./scripts/deploy.sh` (copies into `C:/Games/Chorizite/plugins/Chara
 
 ## Status
 
-0.1.2 — screen override, login capture, per-character level + allegiance. CI on push/PR; releases via `v*` tags.
+0.1.3 — level/allegiance capture fixed (exact-signature delegate binding); releases published for v0.1.2/v0.1.3.
