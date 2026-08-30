@@ -29,6 +29,16 @@ Standalone Chorizite **Client-environment** plugin. It replaces the AC plugin's 
 - Screen Lua `logDebug()` prints `[CharacterSelect] ...` lines: character count, world info updates.
 - Log file: `C:/Games/Chorizite/data/logs/log.txt` — grep `CharacterSelect`.
 
+## 0.1.1 iteration (user test #1 feedback)
+
+- **Screen override CONFIRMED working** (user screenshot shows our two-line population box on the real char select).
+- **Create Character button broken**: `ac:SetScreen(GameScreen.CharCreate)` throws `XLua.LuaException: invalid value for enum AC.Lib.Screens.GameScreen` (ObjectCasters.cs:508). Fix: pcall the typed call, fall back to `ac:SetScreen(268435467)` (raw UIMode.CharGenMainUI value). Debug log prints the failure + retry.
+- **Population showed `0.0 / 128.0`**: XLua surfaces the C# ints as floats; Lua concat prints them raw. Fixed with `string.format("%d")` via `fmtInt()` + a preformatted `state.Population` string.
+- **Distorted population font**: stock theme uses `font-family: Tahoma` but RmlUi only ships LatoLatin-Regular.ttf — small sizes render with a substitute that looks wrong. Raised to 13px and removed the outline effect on the population line.
+- **Sound muting**: all DAT wave playback funnels through `ACChoriziteBackend.PlaySound(uint)` (NAudio engines per sample rate) — a single choke point. `ShouldMuteSound` added; wiring it as a harmony/IL hook is still TODO (see below).
+- **Intro skip**: native client plays intro videos via UIFlow UIMode.IntroUI (268435457) → CharacterManagementUI (268435466). `TrySkipIntro` logs UIFlow.m_instance availability; actually forcing the mode needs either a `QueueUIMode` call through the backend's `GameScreen` setter (reflection) once UIFlow exists, or hooking at boot. TODO.
+- XLua enum-cast lesson: **C# enum values passed to `SetScreen` from Lua can fail to cast ("invalid value for enum") — pass the raw uint instead, or pcall + fallback.**
+
 ## Current known limitations (0.1.0 spike)
 
 - Level/allegiance list is empty until each character has logged in at least once with this plugin installed.
