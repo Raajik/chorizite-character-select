@@ -43,7 +43,7 @@
 
             .char-level {
               position: absolute;
-              top: 0px;
+              top: 4px;
               right: 8px;
               font-size: 20px;
               font-weight: bold;

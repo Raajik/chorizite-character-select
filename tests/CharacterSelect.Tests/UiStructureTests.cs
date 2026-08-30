@@ -34,6 +34,8 @@ public class ScreenStructureTests {
         Assert.Contains("char-allegiance", rml);
         Assert.Matches(@"\.char-level \{[^}]*font-size: 20px", rml);
         Assert.Matches(@"\.char-level \{[^}]*right: 8px", rml);
+        // The big level number must not touch the row's top edge (0.1.6 fix).
+        Assert.Matches(@"\.char-level \{[^}]*top: 4px", rml);
         // Angle-bracket allegiance rendering.
         Assert.Contains("\"<\" .. char.Allegiance .. \">\"", rml);
     }

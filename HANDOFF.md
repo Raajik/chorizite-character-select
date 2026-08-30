@@ -9,7 +9,7 @@ Standalone Chorizite **Client-environment** plugin. Replaces the AC plugin's cha
 - Installed to: `C:\Games\Chorizite\plugins\CharacterSelect`
 - Runtime data: `C:\Games\Chorizite\data\CharacterSelect\` (`characters.json`, `settings.json`)
 - Depends on: AC plugin (`plugins\AC` 0.0.5), Lua 0.0.13, RmlUi 0.0.11, Chorizite 0.0.15 stack.
-- Current version: **0.1.5** · GitHub: https://github.com/Raajik/chorizite-character-select (CI on push/PR; tagging `v<manifest version>` publishes a release zip)
+- Current version: **0.1.6** · GitHub: https://github.com/Raajik/chorizite-character-select (CI on push/PR; tagging `v<manifest version>` publishes a release zip)
 
 ## Validated facts (all from decompiling the installed stack)
 
@@ -39,6 +39,10 @@ Standalone Chorizite **Client-environment** plugin. Replaces the AC plugin's cha
 - **Settings**: `CspSettings` (SkipIntro, MuteSelectSounds; both default true) + `CspSettingsContext` source-gen; `ISerializeSettings<CspSettings>` implemented explicitly on the plugin → `data/CharacterSelect/settings.json` handled by the loader. `SkipIntro`/`MuteSelectSounds` are `private set` — the only writer besides the ctor is `DeserializeAfterLoad`.
 - `assets/screens/CharSelect.rml`: stock layout + two-line population box (`.world-name` / `.world-population`), per-row `.char-name` / `.char-allegiance` (`<name>`) / `.char-level` (20px gold, right-aligned; `.unknown` shows "Level ?"). Lua `factsFor(id)` calls `csp.Lookup(id)` → JSON → row data. `logDebug()` prints `[CharacterSelect] ...` to the log.
 - Capture path: `OnLogin_PlayerDescription` → read IntProperties[25] + StringProperties[47] (fallback StringProperties[11] = MonarchsName when 47 is empty) → `CurrentCharacter()` (reflection Game.Character.Id/Name) → `CharacterStore.Record`.
+
+## 0.1.6 — level number nudge (2026-08-30)
+
+0.1.5 user round: everything works (`looking good`). Only tweak: the big gold level number sat at `top: 0px` of its 42px row, touching the row's top edge — nudged to `top: 4px`. Next check: the same screen on an account with more characters (more data points for rows/allegiance).
 
 ## 0.1.5 — level display fix + population box geometry (2026-08-30)
 
