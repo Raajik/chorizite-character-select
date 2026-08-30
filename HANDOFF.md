@@ -9,7 +9,7 @@ Standalone Chorizite **Client-environment** plugin. Replaces the AC plugin's cha
 - Installed to: `C:\Games\Chorizite\plugins\CharacterSelect`
 - Runtime data: `C:\Games\Chorizite\data\CharacterSelect\` (`characters.json`, `settings.json`)
 - Depends on: AC plugin (`plugins\AC` 0.0.5), Lua 0.0.13, RmlUi 0.0.11, Chorizite 0.0.15 stack.
-- Current version: **0.2.0** · GitHub: https://github.com/Raajik/chorizite-character-select (CI on push/PR; tagging `v<manifest version>` publishes a release zip)
+- Current version: **0.2.1** · GitHub: https://github.com/Raajik/chorizite-character-select (CI on push/PR; tagging `v<manifest version>` publishes a release zip)
 
 ## Validated facts (all from decompiling the installed stack)
 
@@ -39,6 +39,12 @@ Standalone Chorizite **Client-environment** plugin. Replaces the AC plugin's cha
 - **Settings**: `CspSettings` (SkipIntro, MuteSelectSounds; both default true) + `CspSettingsContext` source-gen; `ISerializeSettings<CspSettings>` implemented explicitly on the plugin → `data/CharacterSelect/settings.json` handled by the loader. `SkipIntro`/`MuteSelectSounds` are `private set` — the only writer besides the ctor is `DeserializeAfterLoad`.
 - `assets/screens/CharSelect.rml`: stock layout + two-line population box (`.world-name` / `.world-population`), per-row `.char-name` / `.char-allegiance` (`<name>`) / `.char-level` (20px gold, right-aligned; `.unknown` shows "Level ?"). Lua `factsFor(id)` calls `csp.Lookup(id)` → JSON → row data. `logDebug()` prints `[CharacterSelect] ...` to the log.
 - Capture path: `OnLogin_PlayerDescription` → read IntProperties[25] + StringProperties[47] (fallback StringProperties[11] = MonarchsName when 47 is empty) → `CurrentCharacter()` (reflection Game.Character.Id/Name) → `CharacterStore.Record`.
+
+## 0.2.1 — skin iteration 1 (2026-08-30)
+
+User feedback on 0.2.0: "lots of overlap and stuff"; direction: start from a solid/stylized background, then buttons. Changes: richer layered gradient (`#2b4a6f → #1a2f47 45% → #071018`), rows became self-contained cards (translucent `#ffffff10` bg, 2px vertical margins, rounded corners, `overflow: hidden` so long names/level numbers can't spill), compact rows rebalanced to `height: 25px` + margins (same 29px pitch, 10 chars fit the panel). v0.2.1 deployed + released (`CharacterSelect-v0.2.1.zip`, CI green, 15/15 tests).
+
+**ocrprobe first read** (on the 0.2.0-era paste): server `Everson`, `Population: 34` (the old "population shows 0" issue appears resolved server-side now), all 9 rows with per-row level numbers (0.1.7 anchoring confirmed visually), long names ("Hot Goat Summer") get tight against the level number → candidate spacing tweak (add right padding / max-width to `.char-name`). The paste also showed the torn double-render (DELETE/CREDITS ghosted twice) — from the reload-storm moment, not the reskin.
 
 ## 0.2.0 — pure-CSS reskin + allegiance capture (2026-08-30)
 
@@ -127,13 +133,14 @@ The 0.1.2 user round produced two findings:
 
    **Status:** `2c728a0` pushed; tags `v0.1.2` + `v0.1.3` live with green CI, `CharacterSelect-v0.1.3.zip` published; deployed DLL byte-verified (UTF-16LE probe for `player description received but no current character known`). The 0.1.3 capture itself is still awaiting a client-restart validation — the 0.1.4 round tests it together with the new features.
 
-## Known issues / TODO (0.1.5)
+## Known issues / TODO (0.2.1)
 
-1. **Population counts showed `0` on Unfamiliar Shores both times** — verify `CurrentConnectionCount` updates (it comes from OnWorldInfo; may be server-dependent). Debug line `world info: ...` logs the values when received.
-2. **WaveOutEvent.Volume semantics**: `waveOutSetVolume` applies per waveOut device id, and `WaveOutEvent` opens the default device — muting zeroes the client's WinMM wave device, which is exactly "mute the client" (all DAT playback goes through these engines) but is restored to 1.0 whenever gameplay is entered and on Dispose. If a user ever reports other audio being affected, that's why.
-3. **Allegiance fallback upgrade path**: MonarchsName may be missing too on some servers; the full fallback is `InstanceValues[Monarch=26]` → `World.Get(monarchId).Name` while in-world. (Observed so far: allegiance '' for a fresh level-1 character — correct, no allegiance.)
-4. **No in-game settings UI**: toggling requires editing `settings.json` + client restart. Chorizite's plugin framework may support a settings view later.
-5. **User report (won't fix here)**: Chorizite bar plugin icons are unclickable in-game — that's core/launcher behavior, unrelated to this plugin.
+1. **Reskin iteration 2 pending user feedback** (fresh 0.2.1 screenshot + which elements overlap where). Next layout step: reposition buttons off the stock-art coordinates onto a deliberate grid (world card + panel left column; ENTER + Create/Credits/Delete/Exit stacked right). Long-name/level crowding: add right padding or max-width to `.char-name`.
+2. **Artwork options** (after layout settles): (a) extract + recolor existing client art from the DATs into a custom background PNG (datprobe pipeline works: `A:\tmp\datprobe`), or (b) user drops any PNG into the plugin `assets` folder → wire as body decorator. Cannot generate art in-harness.
+3. **Allegiance capture live validation pending**: the name arrives via `OnAllegiance_AllegianceUpdate` (`Profile.Hierarchy.AllegianceName`), which the client only sends when the allegiance syncs in-world — log into an allegiance-having character, open the allegiance panel, log off, expect `captured allegiance '...' for <name>` in the log and `<name>` on the row.
+4. **WaveOutEvent.Volume semantics** (unchanged from 0.1.4): muting zeroes the client's WinMM wave device, restored at GamePlayUI and on Dispose.
+5. **No in-game settings UI**: toggling requires editing `settings.json` + client restart.
+6. **User report (won't fix here)**: Chorizite bar plugin icons unclickable in-game; PluginManagerUI's own bugs (manager.lua:42, plugin-index 404) — core-side.
 
 ## Debug instrumentation
 
@@ -151,12 +158,13 @@ cd A:/ai/projects/chorizite-mods/chorizite-character-select
 CHORIZITE_HOME='D:/Games/Chorizite' "C:/Program Files/Git/bin/bash.exe" scripts/deploy.sh
 ```
 
-8 structural tests assert on the RML/plugin source (two-line population, row layout, capture+property IDs, exact-signature capture bridge, typed intro-skip wiring + UIMode constants, audio-engine mute path, monarch fallback, settings contract, XLua colon-call script path, box-art text geometry).
+15 structural tests assert on the RML/plugin source (two-line population, row layout + level anchoring/compact sizing, capture+property IDs, exact-signature capture bridge, typed intro-skip wiring + UIMode constants, audio-engine mute path, monarch fallback, settings contract, XLua colon-call script path, pure-CSS skin, allegiance S2C capture).
 
-## Test checklist for next user round (0.1.5)
+## Test checklist for next user round (0.2.1)
 
-1. Restart the client (0.1.5 deployed + verified). Startup log should show `CharacterSelect 0.1.5 initialized` plus the 0.1.4 hook lines (`subscribed to OnLogin_PlayerDescription`, `subscribed to UIBackend.OnScreenChanged (backend=ACChoriziteBackend)`), NO ArgumentException/TargetException.
-2. **Level display**: the char select screen should now show `1` (gold, right) for Breeze instead of `Level ?` — the store already contains `Breeze level 1` from the 0.1.4 round, and the Lua path is fixed (colon calls + primitive `GetLevel`). Log shows `row Breeze id=500002FA level=1 allegiance=''` when the screen loads. If it STILL shows `Level ?`, the `row ...` line tells us whether facts resolved (level=1 → RML/CSS issue) or not (XLua call issue).
-3. **Population box**: server name + `Population: X / 128` should sit centered inside the box's beveled interior with clear space above/below — no clipping at the top edge.
-4. Intro skip + mute as in the 0.1.4 round: no intro videos, no select/login sounds, sounds return in-game.
-5. Population count remains server-dependent (known issue 1). Do not open the Plugin Manager UI in-world right before logging out (0.1.3 finding 1).
+1. Restart the client (0.2.1 deployed). Startup log: `CharacterSelect 0.2.1 initialized`, hook lines present, NO ArgumentException/TargetException.
+2. **Reskin look**: dark gradient background, glass cards, gold accents — send a fresh screenshot (OCR tool reads it now); note any overlapping elements and whether the double-render/torn-edge artifact from the reload storm still appears on a clean session.
+3. **Long names**: check "Hot Goat Summer"-style names vs the level number spacing.
+4. **Allegiance**: on a character with an allegiance, open the allegiance panel in-world, log off → expect log line `captured allegiance '...' for <name>` and `<name>` rendered under the character name; also verify previously-captured characters keep their allegiance in `characters.json`.
+5. Population (was 34 on Everson), intro skip, mute, per-row levels — regression-check as before.
+6. Deploys now happen with the client CLOSED (mid-session plugin-file reloads caused the 0.1.7-era breakage; 0.1.8's watchdog re-registration self-heals the screen name within ~500ms regardless).
