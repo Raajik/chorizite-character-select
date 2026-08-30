@@ -9,7 +9,7 @@ Standalone Chorizite **Client-environment** plugin. Replaces the AC plugin's cha
 - Installed to: `C:\Games\Chorizite\plugins\CharacterSelect`
 - Runtime data: `C:\Games\Chorizite\data\CharacterSelect\` (`characters.json`, `settings.json`)
 - Depends on: AC plugin (`plugins\AC` 0.0.5), Lua 0.0.13, RmlUi 0.0.11, Chorizite 0.0.15 stack.
-- Current version: **0.1.7** · GitHub: https://github.com/Raajik/chorizite-character-select (CI on push/PR; tagging `v<manifest version>` publishes a release zip)
+- Current version: **0.1.8** · GitHub: https://github.com/Raajik/chorizite-character-select (CI on push/PR; tagging `v<manifest version>` publishes a release zip)
 
 ## Validated facts (all from decompiling the installed stack)
 
@@ -39,6 +39,18 @@ Standalone Chorizite **Client-environment** plugin. Replaces the AC plugin's cha
 - **Settings**: `CspSettings` (SkipIntro, MuteSelectSounds; both default true) + `CspSettingsContext` source-gen; `ISerializeSettings<CspSettings>` implemented explicitly on the plugin → `data/CharacterSelect/settings.json` handled by the loader. `SkipIntro`/`MuteSelectSounds` are `private set` — the only writer besides the ctor is `DeserializeAfterLoad`.
 - `assets/screens/CharSelect.rml`: stock layout + two-line population box (`.world-name` / `.world-population`), per-row `.char-name` / `.char-allegiance` (`<name>`) / `.char-level` (20px gold, right-aligned; `.unknown` shows "Level ?"). Lua `factsFor(id)` calls `csp.Lookup(id)` → JSON → row data. `logDebug()` prints `[CharacterSelect] ...` to the log.
 - Capture path: `OnLogin_PlayerDescription` → read IntProperties[25] + StringProperties[47] (fallback StringProperties[11] = MonarchsName when 47 is empty) → `CurrentCharacter()` (reflection Game.Character.Id/Name) → `CharacterStore.Record`.
+
+## 0.1.8 — self-healing screen registration (brown-vanilla-screen fix) (2026-08-30)
+
+User report: every 2nd/3rd logoff the char select "reverts to the default" — a brown vanilla-looking screen. Log forensics (13 logoffs total, all with our document mounting and rows rebuilding cleanly — the data path was never at fault):
+
+1. **The log shows mid-session `Reloading plugins` cycles** (3 during the reported sitting, clustered around logoffs; ~26 across the log). Each cycle unloads+reloads **Lua Scripting, RmlUi, Launcher Interface, Plugin Manager UI, Community Server Browser** — but NOT AC / CharacterSelect / Juggernaut. The launcher's own Simple-screen components log `Element is null, skipping prop update` storms right before each cycle, and launcher documents (PluginsBar, Simple, Server Browser) get re-shown right after.
+2. **Why the vanilla screen appears**: RmlUi's screen registry resets when the RmlUi plugin reloads. AC and this plugin are not part of the cycle, so nobody re-registers "CharSelect" — the next CharacterManagementUI entry falls back to the **native vanilla char select** (the brown one, with models). It is NOT a custom plugin screen and NOT our document failing. Likely trigger for the mid-session cycles: `deploy.sh` copying new plugin files to disk while the client is open (0.1.6/0.1.7 were deployed mid-session during that sitting).
+3. **Fix**: the 500ms watchdog now re-runs `RmlUiPlugin.Instance?.RegisterScreen("CharSelect", _screenRmlPath)` every tick (a cheap map insert — the RML loads at show time), healing the registration within 500ms of any RmlUi reload, and also winning back the name if anything else ever registers over it. Guarded so RmlUi being mid-reload (Instance null / throwing) just waits for the next tick.
+
+**Known non-fix**: the 1–3 second window right after logoff where the document show is still pending (log gap 26–50 lines) can still flash the native UI — core-side timing, out of our control.
+
+**Deployment status (2026-08-30, verified):** 13/13 tests; deployed; DLL probed for `0.1.8`. Going forward: run `deploy.sh` with the client CLOSED, or expect a reload blip (now self-healing).
 
 ## 0.1.7 — multi-character layout fix (2026-08-30)
 

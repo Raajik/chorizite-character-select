@@ -67,6 +67,7 @@ public sealed class CharacterSelectPlugin : IPluginCore, ISerializeSettings<CspS
     private FieldInfo? _audioEnginesField;
     private FieldInfo? _outputDeviceField;
     private PropertyInfo? _deviceVolumeProperty;
+    private string? _screenRmlPath;
 
     // Settings (persisted to settings.json by the loader via ISerializeSettings).
     public bool SkipIntro { get; private set; } = true;
@@ -82,10 +83,10 @@ public sealed class CharacterSelectPlugin : IPluginCore, ISerializeSettings<CspS
     }
 
     protected override void Initialize() {
-        var ourScreenPath = Path.Combine(AssemblyDirectory, "assets", "screens", "CharSelect.rml");
+        _screenRmlPath = Path.Combine(AssemblyDirectory, "assets", "screens", "CharSelect.rml");
         try {
-            var registered = RmlUiPlugin.Instance.RegisterScreen("CharSelect", ourScreenPath);
-            _log.LogInformation("CharacterSelect: RegisterScreen(CharSelect, {Path}) -> {Result}", ourScreenPath, registered);
+            var registered = RmlUiPlugin.Instance.RegisterScreen("CharSelect", _screenRmlPath);
+            _log.LogInformation("CharacterSelect: RegisterScreen(CharSelect, {Path}) -> {Result}", _screenRmlPath, registered);
         }
         catch (Exception ex) {
             _log.LogError(ex, "CharacterSelect: RegisterScreen failed");
@@ -215,6 +216,17 @@ public sealed class CharacterSelectPlugin : IPluginCore, ISerializeSettings<CspS
     private void UiWatchdogTick() {
         if (Interlocked.Exchange(ref _watchdogActive, 1) == 1) return;
         try {
+            // Mid-session core-plugin reload cycles (launcher flows or plugin
+            // files changing on disk) unload+reload the RmlUi plugin, which
+            // resets its screen registry. AC and this plugin are NOT part of
+            // those cycles, so nobody re-registers "CharSelect" — the next
+            // character select then falls back to the native (vanilla brown)
+            // screen. Re-registering every tick heals that within 500ms.
+            try {
+                RmlUiPlugin.Instance?.RegisterScreen("CharSelect", _screenRmlPath);
+            }
+            catch { /* RmlUi is mid-reload; the next tick retries */ }
+
             if (SkipIntro && CurrentScreen() == UIModeIntroUi) {
                 SkipIntroNow("watchdog");
             }

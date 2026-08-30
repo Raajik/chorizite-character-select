@@ -148,6 +148,20 @@ public class FeatureWiringTests {
         // us; GetValue(null) there throws TargetException (0.1.3 log line).
         Assert.Contains("acType is null || acInstance is null", cs);
     }
+
+    [Fact]
+    public void WatchdogReRegistersTheScreenAfterRmlUiReloads() {
+        var cs = ReadPlugin();
+
+        // Mid-session core-plugin reload cycles (Lua/RmlUi unload+reload)
+        // reset RmlUi's screen registry; AC and this plugin are not part of
+        // those cycles, so nothing re-registers "CharSelect" and the client
+        // falls back to the native character select. The watchdog must heal
+        // the registration.
+        Assert.Contains("_screenRmlPath = Path.Combine(AssemblyDirectory", cs);
+        Assert.Contains("RmlUiPlugin.Instance?.RegisterScreen(\"CharSelect\", _screenRmlPath);", cs);
+        Assert.Contains("RegisterScreen(\"CharSelect\", _screenRmlPath);", cs);
+    }
 }
 
 public class ScreenScriptTests {

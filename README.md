@@ -19,4 +19,4 @@ Deploy with `./scripts/deploy.sh` (copies into `C:/Games/Chorizite/plugins/Chara
 
 ## Status
 
-0.1.7 — multi-character layout: level numbers render inside their own row, compact rows keep all characters inside the panel; releases published for v0.1.2–v0.1.7.
+0.1.8 — screen registration self-heals after mid-session plugin reload cycles (the intermittent vanilla-screen reversion); releases published for v0.1.2–v0.1.8.
