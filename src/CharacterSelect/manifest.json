@@ -3,8 +3,8 @@
   "name": "Character Select Plus",
   "author": "Raajik",
   "entryfile": "CharacterSelect.dll",
-  "version": "0.1.3",
-  "description": "Enhanced character select screen: population box, last-known level, and allegiance per character.",
+  "version": "0.1.4",
+  "description": "Enhanced character select screen: population box, last-known level, and allegiance per character. Skips intro videos and mutes select-screen sounds (toggleable).",
   "repo": "https://github.com/Raajik/chorizite-character-select",
   "dependencies": [
     "RmlUi@0.0.1",

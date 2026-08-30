@@ -1,7 +1,13 @@
 using System;
 using System.Collections;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Reflection;
+using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
+using System.Threading;
+using Chorizite.Core.Backend.Client;
 using Chorizite.Core.Plugins;
 using Chorizite.Core.Plugins.AssemblyLoader;
 using Microsoft.Extensions.Logging;
@@ -10,35 +16,69 @@ using RmlUi;
 namespace CharacterSelect;
 
 /// <summary>
+/// Toggleable plugin settings, persisted by the plugin loader to
+/// <c>&lt;DataDirectory&gt;/settings.json</c> via <see cref="ISerializeSettings{T}"/>.
+/// </summary>
+public sealed class CspSettings {
+    public bool SkipIntro { get; set; } = true;
+    public bool MuteSelectSounds { get; set; } = true;
+}
+
+[JsonSourceGenerationOptions(WriteIndented = true)]
+[JsonSerializable(typeof(CspSettings))]
+internal sealed partial class CspSettingsContext : JsonSerializerContext { }
+
+/// <summary>
 /// Character Select Plus: replaces the AC plugin's character select screen with
 /// one that shows the population on two lines, plus each character's
-/// last-known level and allegiance. Also skips intro videos and mutes
-/// character-select sounds.
+/// last-known level and allegiance. Also skips the intro videos and mutes
+/// character-select sounds (both toggleable, persisted to settings.json).
 /// </summary>
 /// <remarks>
-/// The AC plugin's <c>ACPlugin.Instance</c> and <c>Net</c> members, and the
-/// bootstrapper's <c>PlaySound</c>, are reached through reflection so a
-/// mismatched AC plugin version degrades to "feature off" with a log line
-/// instead of crashing the client.
+/// The screen override and the typed <c>IClientBackend</c> surface
+/// (<c>GameScreen</c>, <c>UIBackend.OnScreenChanged</c>) come from Chorizite.Core.
+/// The AC plugin's <c>ACPlugin.Instance</c>/<c>Net</c> members and the
+/// bootstrapper's private <c>_audioEngines</c> dictionary are reached through
+/// reflection so a mismatched AC plugin version degrades to "feature off" with
+/// a log line instead of crashing the client.
 /// </remarks>
-public sealed class CharacterSelectPlugin : IPluginCore {
+public sealed class CharacterSelectPlugin : IPluginCore, ISerializeSettings<CspSettings> {
+    /// <summary>UIMode.IntroUI — plays the intro videos.</summary>
+    private const int UIModeIntroUi = 268435457;               // 0x10000001
+    /// <summary>UIMode.GamePlayUI — in-world; never mute here.</summary>
+    private const int UIModeGamePlayUi = 268435464;            // 0x10000008
+    /// <summary>UIMode.CharacterManagementUI — the character select screen.</summary>
+    private const int UIModeCharacterManagementUi = 268435466; // 0x1000000A
+
     private readonly ILogger _log;
     private readonly CharacterStore _store;
     private EventInfo? _playerDescriptionEvent;
     private Delegate? _playerDescriptionHandler;
     private object? _s2c;
-    private object? _choriziteBackend;
-    private MethodInfo? _playSoundMethod;
+    private IClientBackend? _clientBackend;
+    private Timer? _uiWatchdog;
+    private int _watchdogActive;
+    private bool? _lastMutedApplied;
 
-    // Settings (persisted so the user's choices stick).
-    public bool SkipIntro { get; set; } = true;
-    public bool MuteSelectSounds { get; set; } = true;
+    // Reflection handles into the bootstrapper's audio stack, resolved lazily:
+    // ACChoriziteBackend._audioEngines is a Dictionary<int, AudioPlaybackEngine>;
+    // each engine holds a NAudio WaveOutEvent in its private `outputDevice`
+    // field, and WaveOutEvent.Volume (float, 0..1) is the mute surface.
+    private FieldInfo? _audioEnginesField;
+    private FieldInfo? _outputDeviceField;
+    private PropertyInfo? _deviceVolumeProperty;
+
+    // Settings (persisted to settings.json by the loader via ISerializeSettings).
+    public bool SkipIntro { get; private set; } = true;
+    public bool MuteSelectSounds { get; private set; } = true;
 
     public CharacterSelectPlugin(
         AssemblyPluginManifest manifest,
-        ILogger<CharacterSelectPlugin> log) : base(manifest) {
+        ILogger<CharacterSelectPlugin> log,
+        IClientBackend? clientBackend = null) : base(manifest) {
         _log = log;
         _store = new CharacterStore(DataDirectory);
+        _clientBackend = clientBackend;
     }
 
     protected override void Initialize() {
@@ -52,7 +92,7 @@ public sealed class CharacterSelectPlugin : IPluginCore {
         }
 
         SubscribeCapture();
-        HookSoundAndIntro();
+        HookSoundIntroAndAudio();
         _log.LogInformation("CharacterSelect {Version} initialized (skipIntro={Skip}, muteSounds={Mute})",
             Manifest.Version, SkipIntro, MuteSelectSounds);
     }
@@ -106,113 +146,159 @@ public sealed class CharacterSelectPlugin : IPluginCore {
     }
 
     /// <summary>
-    /// Hooks the bootstrapper's PlaySound (single choke point for all DAT wave
-    /// playback — muting it kills every character-select sound) and forces the
-    /// UI past the intro videos straight to the character management screen.
+    /// Wires the intro skip and the sound mute to the typed
+    /// <c>IClientBackend</c>: <c>GameScreen</c> is a plain int property whose
+    /// setter queues a native <c>UIFlow::QueueUIMode</c>, and
+    /// <c>UIBackend.OnScreenChanged</c> fires (from a native hook on
+    /// <c>UIFlow::UseNewMode</c>) after every UI mode switch.
     /// </summary>
-    private void HookSoundAndIntro() {
+    private void HookSoundIntroAndAudio() {
         try {
-            var backendType = FindType("Chorizite.NativeClientBootstrapper.ACChoriziteBackend");
-            if (backendType is null) {
-                _log.LogWarning("CharacterSelect: ACChoriziteBackend not found; intro-skip and mute disabled");
-                return;
-            }
-
-            // The backend instance: ACPlugin.ClientBackend (internal property).
-            var acType = FindAcPluginType();
-            var acInstance = GetAcInstance(acType);
-            _choriziteBackend = acType?.GetProperty("ClientBackend", BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(acInstance);
-            if (_choriziteBackend is null) {
-                _log.LogWarning("CharacterSelect: ClientBackend unavailable; intro-skip and mute disabled");
-                return;
-            }
-
-            _playSoundMethod = backendType.GetMethod("PlaySound", BindingFlags.Public | BindingFlags.Instance);
-            _log.LogInformation("CharacterSelect: hooked PlaySound ({Found})", _playSoundMethod is not null);
-
-            if (SkipIntro) {
-                TrySkipIntro();
-            }
-        }
-        catch (Exception ex) {
-            _log.LogError(ex, "CharacterSelect: HookSoundAndIntro failed");
-        }
-    }
-
-    private void TrySkipIntro() {
-        try {
-            // UIFlow.m_instance is a static pointer to a pointer; set _curMode
-            // straight to CharacterManagementUI (268435466) and queue the
-            // mode change so the native UI switches without playing videos.
-            var uiFlowType = FindType("AcClient.UIFlow");
-            var mInstanceField = uiFlowType?.GetField("m_instance", BindingFlags.Public | BindingFlags.Static);
-            if (uiFlowType is null || mInstanceField is null) {
-                _log.LogWarning("CharacterSelect: AcClient.UIFlow.m_instance not found; intro not skipped");
-                return;
-            }
-
-            var instancePtr = mInstanceField.GetValue(null);
-            _log.LogInformation("CharacterSelect: UIFlow.m_instance = {Value} (null means client not far enough yet; intro will play once)", instancePtr);
-        }
-        catch (Exception ex) {
-            _log.LogError(ex, "CharacterSelect: TrySkipIntro failed");
-        }
-    }
-
-    internal bool ShouldMuteSound(uint soundId) {
-        if (!MuteSelectSounds) return false;
-        // Only mute while not in gameplay: char-select UI sounds.
-        try {
-            var uiFlowType = FindType("AcClient.UIFlow");
-            var mInstanceField = uiFlowType?.GetField("m_instance", BindingFlags.Public | BindingFlags.Static);
-            var instancePtr = mInstanceField?.GetValue(null);
-            if (instancePtr is null) return false;
-            // Read _curMode through the pointer chain via reflection on the wrapper.
-            var curMode = ReadCurMode(instancePtr);
-            // 268435464 = GamePlayUI. Mute everything EXCEPT gameplay.
-            return curMode != 268435464;
-        }
-        catch {
-            return false;
-        }
-    }
-
-    private static int? ReadCurMode(object instancePtr) {
-        try {
-            // instancePtr is a void* boxed as IntPtr or pointer; use unsafe read via reflection-free path.
-            var ptr = ToPointer(instancePtr);
-            if (ptr == System.IntPtr.Zero) return null;
-            var flow = System.Runtime.InteropServices.Marshal.ReadIntPtr(ptr);
-            if (flow == System.IntPtr.Zero) return null;
-            // _curMode is the first field after the object header? We know from
-            // the decompile that UIFlow._curMode is a public field at offset 0x10
-            // (after vtable + refs); read defensively and validate the value is
-            // one of the known UIMode constants.
-            foreach (var offset in new int[] { 0x10, 0x0C, 0x14 }) {
-                var candidate = System.Runtime.InteropServices.Marshal.ReadInt32(flow, offset);
-                if (candidate is 268435457 or 268435458 or 268435459 or 268435461 or 268435464 or 268435465 or 268435466 or 268435467) {
-                    return candidate;
+            if (_clientBackend is null) {
+                // The loader only injects IClientBackend when the DI container
+                // registers it; fall back to ACPlugin.ClientBackend.
+                var acType = FindAcPluginType();
+                var acInstance = GetAcInstance(acType);
+                if (acType?.GetProperty("ClientBackend", BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(acInstance) is IClientBackend backend) {
+                    _clientBackend = backend;
                 }
             }
-            return null;
+            if (_clientBackend is null) {
+                _log.LogWarning("CharacterSelect: IClientBackend unavailable; intro-skip and mute disabled");
+                return;
+            }
+
+            _clientBackend.UIBackend.OnScreenChanged += OnScreenChanged;
+            _log.LogInformation("CharacterSelect: subscribed to UIBackend.OnScreenChanged (backend={Backend})",
+                _clientBackend.GetType().Name);
+
+            _uiWatchdog = new Timer(_ => UiWatchdogTick(), null,
+                TimeSpan.FromMilliseconds(500), TimeSpan.FromMilliseconds(500));
+            _log.LogInformation("CharacterSelect: audio engines discovered={Engines} (private _audioEngines on {Backend})",
+                CountAudioEngines(), _clientBackend.GetType().Name);
+
+            if (SkipIntro) {
+                SkipIntroNow("initialize");
+            }
         }
-        catch {
-            return null;
+        catch (Exception ex) {
+            _log.LogError(ex, "CharacterSelect: HookSoundIntroAndAudio failed");
         }
     }
 
-    private static System.IntPtr ToPointer(object boxed) {
-        // Boxed void*/IntPtr handling.
-        if (boxed is System.IntPtr ip) return ip;
-        if (boxed is System.UInt64 ul) return (System.IntPtr)(long)ul;
-        if (boxed is System.UInt32 ui) return (System.IntPtr)(long)ui;
+    /// <summary>
+    /// Fired on the game thread by the bootstrapper's native
+    /// <c>UIFlow::UseNewMode</c> hook after each UI mode switch. Never let an
+    /// exception escape back into native code.
+    /// </summary>
+    private void OnScreenChanged(object? sender, EventArgs e) {
         try {
-            var field = boxed.GetType().GetField("m_data", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
-                ?? boxed.GetType().GetField("_value", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-            if (field is not null) return (System.IntPtr)field.GetValue(boxed)!;
+            if (SkipIntro && CurrentScreen() == UIModeIntroUi) {
+                SkipIntroNow("screen change");
+            }
+        }
+        catch { /* swallow — see remarks */ }
+    }
+
+    /// <summary>
+    /// Cheap catch-all so features survive a missed event: re-checks the screen
+    /// (intro may already be playing before we subscribed) and re-applies mute
+    /// volumes to any audio engines created since the last pass (engines are
+    /// created lazily per sample rate by the bootstrapper's PlaySound).
+    /// </summary>
+    private void UiWatchdogTick() {
+        if (Interlocked.Exchange(ref _watchdogActive, 1) == 1) return;
+        try {
+            if (SkipIntro && CurrentScreen() == UIModeIntroUi) {
+                SkipIntroNow("watchdog");
+            }
+            ApplySoundVolumes();
+        }
+        catch { /* the watchdog must never crash the client */ }
+        finally {
+            Interlocked.Exchange(ref _watchdogActive, 0);
+        }
+    }
+
+    private int CurrentScreen() => _clientBackend?.GameScreen ?? 0;
+
+    private void SkipIntroNow(string trigger) {
+        try {
+            if (_clientBackend is null || CurrentScreen() != UIModeIntroUi) return;
+            // The GameScreen setter is a no-op (with a core log line) while
+            // UIFlow.m_instance is still null, and queues the mode natively
+            // otherwise. The raw value is the same uint the RML screen's Lua
+            // fallback passes to SetScreen.
+            _clientBackend.GameScreen = UIModeCharacterManagementUi;
+            _log.LogInformation("CharacterSelect: queued CharacterManagementUI ({Mode}); intro skipped via {Trigger}",
+                UIModeCharacterManagementUi, trigger);
+        }
+        catch (Exception ex) {
+            _log.LogWarning(ex, "CharacterSelect: intro skip via {Trigger} failed", trigger);
+        }
+    }
+
+    private int CountAudioEngines() {
+        try {
+            if (GetAudioEngines() is IDictionary engines) return engines.Count;
         }
         catch { }
-        return System.IntPtr.Zero;
+        return 0;
+    }
+
+    private IDictionary? GetAudioEngines() {
+        if (_clientBackend is null) return null;
+        _audioEnginesField ??= _clientBackend.GetType().GetField("_audioEngines", BindingFlags.NonPublic | BindingFlags.Instance);
+        return _audioEnginesField?.GetValue(_clientBackend) as IDictionary;
+    }
+
+    /// <summary>
+    /// Mutes (volume 0) or restores (volume 1) every audio engine the
+    /// bootstrapper has created. Muting while not in gameplay kills every
+    /// character-select / intro / login sound without hooking PlaySound.
+    /// </summary>
+    private void ApplySoundVolumes() {
+        var mute = MuteSelectSounds && CurrentScreen() != UIModeGamePlayUi;
+        var count = SetEngineVolumes(mute);
+        if (_lastMutedApplied != mute) {
+            _log.LogInformation("CharacterSelect: {State} {Count} audio engine(s) (screen={Screen})",
+                mute ? "muted" : "restored volume on", count, CurrentScreen());
+            _lastMutedApplied = mute;
+        }
+    }
+
+    private int SetEngineVolumes(bool mute) {
+        var engines = GetAudioEngines();
+        if (engines is null) return 0;
+
+        // Snapshot: the bootstrapper adds engines from the game thread while
+        // this runs on the watchdog thread.
+        object[] engineList;
+        try {
+            engineList = engines.Values.Cast<object>().ToArray();
+        }
+        catch {
+            return 0;
+        }
+
+        var desired = mute ? 0f : 1f;
+        var touched = 0;
+        foreach (var engine in engineList) {
+            try {
+                _outputDeviceField ??= engine.GetType().GetField("outputDevice", BindingFlags.NonPublic | BindingFlags.Instance);
+                var device = _outputDeviceField?.GetValue(engine);
+                if (device is null) continue;
+                _deviceVolumeProperty ??= device.GetType().GetProperty("Volume");
+                if (_deviceVolumeProperty?.PropertyType != typeof(float)) continue;
+                var current = (float?)_deviceVolumeProperty.GetValue(device);
+                if (Math.Abs((current ?? 1f) - desired) > 0.01f) {
+                    _deviceVolumeProperty.SetValue(device, desired);
+                    touched++;
+                }
+            }
+            catch { /* engine may be mid-dispose; skip it */ }
+        }
+        return touched;
     }
 
     /// <summary>
@@ -235,8 +321,10 @@ public sealed class CharacterSelectPlugin : IPluginCore {
 
             var level = 0;
             var allegiance = "";
+            var monarchName = "";
 
-            // PropertyInt.Level = 25, PropertyString.AllegianceName = 47.
+            // PropertyInt.Level = 25, PropertyString.AllegianceName = 47,
+            // PropertyString.MonarchsName = 11.
             if (GetMemberValue(baseQualities, "IntProperties") is IDictionary intProps) {
                 foreach (DictionaryEntry entry in intProps) {
                     if (Convert.ToUInt32(entry.Key) == 25u) level = Convert.ToInt32(entry.Value);
@@ -245,8 +333,19 @@ public sealed class CharacterSelectPlugin : IPluginCore {
 
             if (GetMemberValue(baseQualities, "StringProperties") is IDictionary stringProps) {
                 foreach (DictionaryEntry entry in stringProps) {
-                    if (Convert.ToUInt32(entry.Key) == 47u) allegiance = entry.Value?.ToString() ?? "";
+                    var key = Convert.ToUInt32(entry.Key);
+                    if (key == 47u) allegiance = entry.Value?.ToString() ?? "";
+                    else if (key == 11u) monarchName = entry.Value?.ToString() ?? "";
                 }
+            }
+
+            if (string.IsNullOrEmpty(allegiance) && !string.IsNullOrEmpty(monarchName)) {
+                // Some servers never send AllegianceName (47) in the player's
+                // own description; the monarch name is the next-best allegiance
+                // line (the InstanceValues/Monarch -> World.Get path stays a
+                // possible upgrade).
+                allegiance = monarchName;
+                _log.LogInformation("CharacterSelect: allegiance name empty; using monarch name '{Monarch}' as allegiance", monarchName);
             }
 
             var (charId, charName) = CurrentCharacter();
@@ -302,27 +401,6 @@ public sealed class CharacterSelectPlugin : IPluginCore {
         return null;
     }
 
-    private static Type? FindType(string fullName) {
-        foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies()) {
-            try {
-                var type = assembly.GetType(fullName);
-                if (type is not null) return type;
-            }
-            catch { }
-        }
-        return null;
-    }
-
-    protected override void Dispose() {
-        try {
-            if (_s2c is not null && _playerDescriptionEvent is not null && _playerDescriptionHandler is not null) {
-                _playerDescriptionEvent.RemoveEventHandler(_s2c, _playerDescriptionHandler);
-            }
-        }
-        catch (Exception ex) {
-            _log.LogWarning(ex, "CharacterSelect: unsubscribe failed");
-        }
-    }
     /// <summary>JSON blob for one character, or null when unknown. Called from the screen's Lua.</summary>
     /// <remarks>Must be an INSTANCE method: require('Plugins.CharacterSelect') from Lua returns the
     /// plugin instance object, and XLua can only see instance members on it — static classes are invisible.</remarks>
@@ -335,5 +413,50 @@ public sealed class CharacterSelectPlugin : IPluginCore {
     /// <summary>Records facts captured in-world. Callable from Lua (instance method).</summary>
     public void Record(uint id, string name, int level, string allegiance) {
         _store.Record(id, name, level, allegiance);
+    }
+
+    protected override void Dispose() {
+        _uiWatchdog?.Dispose();
+        _uiWatchdog = null;
+
+        if (_clientBackend is not null) {
+            try {
+                _clientBackend.UIBackend.OnScreenChanged -= OnScreenChanged;
+            }
+            catch (Exception ex) {
+                _log.LogWarning(ex, "CharacterSelect: OnScreenChanged unsubscribe failed");
+            }
+            try {
+                // Return the audio devices to the client's control if we are
+                // unloading while muted.
+                SetEngineVolumes(mute: false);
+            }
+            catch { }
+        }
+
+        try {
+            if (_s2c is not null && _playerDescriptionEvent is not null && _playerDescriptionHandler is not null) {
+                _playerDescriptionEvent.RemoveEventHandler(_s2c, _playerDescriptionHandler);
+            }
+        }
+        catch (Exception ex) {
+            _log.LogWarning(ex, "CharacterSelect: unsubscribe failed");
+        }
+    }
+
+    // ---- ISerializeSettings<CspSettings> (invoked by the plugin loader) ----
+
+    JsonTypeInfo<CspSettings> ISerializeSettings<CspSettings>.TypeInfo =>
+        CspSettingsContext.Default.CspSettings;
+
+    CspSettings ISerializeSettings<CspSettings>.SerializeBeforeUnload() =>
+        new() { SkipIntro = SkipIntro, MuteSelectSounds = MuteSelectSounds };
+
+    void ISerializeSettings<CspSettings>.DeserializeAfterLoad(CspSettings? settings) {
+        if (settings is null) return;
+        SkipIntro = settings.SkipIntro;
+        MuteSelectSounds = settings.MuteSelectSounds;
+        _log.LogInformation("CharacterSelect settings loaded: skipIntro={Skip}, muteSounds={Mute}",
+            SkipIntro, MuteSelectSounds);
     }
 }

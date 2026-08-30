@@ -40,7 +40,7 @@ public class ScreenStructureTests {
 
     [Fact]
     public void PluginPersistsCapturedFactsAndRegistersScreen() {
-        var cs = ReadCSharp();
+        var cs = ReadPlugin();
 
         // Screen override attempt is logged with its result.
         Assert.Contains("RegisterScreen(\"CharSelect\"", cs);
@@ -50,14 +50,12 @@ public class ScreenStructureTests {
         Assert.Contains("== 25", cs);
         Assert.Contains("== 47", cs);
         // Store persists to characters.json.
-        Assert.Contains("characters.json", File.ReadAllText(Path.Combine(
-            AppContext.BaseDirectory, "..", "..", "..", "..", "..",
-            "src", "CharacterSelect", "CharacterStore.cs")));
+        Assert.Contains("characters.json", ReadStore());
     }
 
     [Fact]
     public void CaptureBridgeBindsTheExactDelegateSignature() {
-        var cs = ReadCSharp();
+        var cs = ReadPlugin();
 
         // The capture delegate cannot name the AC plugin's event-args type at
         // compile time, so it must close a generic bridge over the type taken
@@ -71,8 +69,72 @@ public class ScreenStructureTests {
         Assert.DoesNotContain("OnPlayerDescriptionBridge(object sender, EventArgs e)", cs);
     }
 
-    private static string ReadCSharp() =>
+    private static string ReadStore() =>
+        File.ReadAllText(Path.GetFullPath(Path.Combine(
+            AppContext.BaseDirectory, "..", "..", "..", "..", "..",
+            "src", "CharacterSelect", "CharacterStore.cs")));
+}
+
+public class FeatureWiringTests {
+    private static string ReadPlugin() =>
         File.ReadAllText(Path.GetFullPath(Path.Combine(
             AppContext.BaseDirectory, "..", "..", "..", "..", "..",
             "src", "CharacterSelect", "CharacterSelectPlugin.cs")));
+
+    [Fact]
+    public void IntroSkipUsesTypedBackendScreenChangedAndWatchdog() {
+        var cs = ReadPlugin();
+
+        // The typed IClientBackend surface (Chorizite.Core): GameScreen setter
+        // queues the native UIFlow::QueueUIMode; OnScreenChanged fires after
+        // every mode switch from the bootstrapper's UseNewMode hook.
+        Assert.Contains("_clientBackend.UIBackend.OnScreenChanged += OnScreenChanged;", cs);
+        Assert.Contains("_clientBackend.GameScreen = UIModeCharacterManagementUi;", cs);
+
+        // Verified UIMode values (decompiled _Enums.cs): IntroUI = 0x10000001,
+        // GamePlayUI = 0x10000008, CharacterManagementUI = 0x1000000A.
+        Assert.Contains("private const int UIModeIntroUi = 268435457;", cs);
+        Assert.Contains("private const int UIModeGamePlayUi = 268435464;", cs);
+        Assert.Contains("private const int UIModeCharacterManagementUi = 268435466;", cs);
+
+        // The watchdog re-checks on a timer so a missed event (intro already
+        // playing before we subscribed) is still caught.
+        Assert.Contains("SkipIntroNow(\"watchdog\")", cs);
+    }
+
+    [Fact]
+    public void SoundMuteTogglesEngineDeviceVolumes() {
+        var cs = ReadPlugin();
+
+        // No IL hook on PlaySound: mute via the bootstrapper's private
+        // _audioEngines dictionary -> each engine's NAudio WaveOutEvent Volume.
+        Assert.Contains("GetField(\"_audioEngines\"", cs);
+        Assert.Contains("GetField(\"outputDevice\"", cs);
+        Assert.Contains("GetProperty(\"Volume\")", cs);
+        // Never mute during gameplay.
+        Assert.Contains("CurrentScreen() != UIModeGamePlayUi", cs);
+        // Unmute on dispose so unloading mid-mute doesn't leave the client silent.
+        Assert.Contains("SetEngineVolumes(mute: false)", cs);
+    }
+
+    [Fact]
+    public void AllegianceFallsBackToMonarchName() {
+        var cs = ReadPlugin();
+
+        // PropertyString.AllegianceName = 47; PropertyString.MonarchsName = 11
+        // (verified against Chorizite.Common 1.0.2) as the fallback source.
+        Assert.Contains("else if (key == 11u) monarchName", cs);
+        Assert.Contains("using monarch name", cs);
+    }
+
+    [Fact]
+    public void SettingsPersistThroughLoaderContract() {
+        var cs = ReadPlugin();
+
+        // The loader reads/writes <DataDirectory>/settings.json for any plugin
+        // implementing ISerializeSettings<T> (TypeInfo + Serialize/Deserialize).
+        Assert.Contains("ISerializeSettings<CspSettings>", cs);
+        Assert.Contains("CspSettingsContext.Default.CspSettings", cs);
+        Assert.Contains("DeserializeAfterLoad(CspSettings? settings)", cs);
+    }
 }
