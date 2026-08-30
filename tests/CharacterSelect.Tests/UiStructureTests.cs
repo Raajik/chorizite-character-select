@@ -183,4 +183,18 @@ public class ScreenScriptTests {
         // The old padding-top approach (unreliable here) is gone.
         Assert.DoesNotContain("padding-top", rml);
     }
+
+    [Fact]
+    public void LevelNumbersAnchorToTheirRowAndRowsFitThePanel() {
+        var rml = ReadRml();
+
+        // .char-level is position:absolute; without position:relative on the
+        // row, every level number anchors to the #panel and they all pile at
+        // the panel's top-right (the many-characters render bug).
+        Assert.Matches(@"#panel li \{[^}]*position: relative", rml);
+        // Rows beyond 6 use the compact class so rows stay inside the panel
+        // art (292px content: 42px x 6, or 29px x 10).
+        Assert.Matches(@"#panel li\.compact \{[^}]*height: 29px", rml);
+        Assert.Contains("compact = #state.Characters > 6", rml);
+    }
 }

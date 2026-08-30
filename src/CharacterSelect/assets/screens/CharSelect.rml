@@ -21,11 +21,20 @@
 
             #panel li {
               display: block;
+              position: relative; /* anchor .char-level (absolute) to its row, not the panel */
               height: 42px;
               padding-left: 6px;
               font-size: 14px;
               font-effect: outline(1px black);
             }
+
+            /* Panel content is 292px tall: 42px rows hold 6 characters. With
+               more, compact rows keep every row inside the panel art
+               (29px x 10 = 290px). */
+            #panel li.compact { height: 29px; }
+            #panel li.compact .char-name { font-size: 12px; line-height: 15px; }
+            #panel li.compact .char-allegiance { font-size: 9px; }
+            #panel li.compact .char-level { font-size: 15px; top: 2px; right: 6px; }
 
             .char-name {
               display: block;
@@ -247,6 +256,9 @@
       ac:OnCharactersChanged('+', UpdateCharacters)
 
       local function CharacterRow(char)
+        -- Rows anchor .char-level via position:relative; rows beyond 6 use
+        -- the compact class so every row fits inside the panel art.
+        local compact = #state.Characters > 6
         local levelLabel = "Level ?"
         if char.Level ~= nil and char.Level > 0 then
           -- XLua numbers surface as floats (0.0/1.0); tostring would render
@@ -258,7 +270,7 @@
           allegianceText = "<" .. char.Allegiance .. ">"
         end
         return rx:Li({
-          class = { selected = state.SelectedId == char.Id },
+          class = { selected = state.SelectedId == char.Id, compact = compact },
           onclick = function()
             state.SelectedId = char.Id
             state.SelectedName = char.Name

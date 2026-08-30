@@ -9,7 +9,7 @@ Standalone Chorizite **Client-environment** plugin. Replaces the AC plugin's cha
 - Installed to: `C:\Games\Chorizite\plugins\CharacterSelect`
 - Runtime data: `C:\Games\Chorizite\data\CharacterSelect\` (`characters.json`, `settings.json`)
 - Depends on: AC plugin (`plugins\AC` 0.0.5), Lua 0.0.13, RmlUi 0.0.11, Chorizite 0.0.15 stack.
-- Current version: **0.1.6** · GitHub: https://github.com/Raajik/chorizite-character-select (CI on push/PR; tagging `v<manifest version>` publishes a release zip)
+- Current version: **0.1.7** · GitHub: https://github.com/Raajik/chorizite-character-select (CI on push/PR; tagging `v<manifest version>` publishes a release zip)
 
 ## Validated facts (all from decompiling the installed stack)
 
@@ -39,6 +39,17 @@ Standalone Chorizite **Client-environment** plugin. Replaces the AC plugin's cha
 - **Settings**: `CspSettings` (SkipIntro, MuteSelectSounds; both default true) + `CspSettingsContext` source-gen; `ISerializeSettings<CspSettings>` implemented explicitly on the plugin → `data/CharacterSelect/settings.json` handled by the loader. `SkipIntro`/`MuteSelectSounds` are `private set` — the only writer besides the ctor is `DeserializeAfterLoad`.
 - `assets/screens/CharSelect.rml`: stock layout + two-line population box (`.world-name` / `.world-population`), per-row `.char-name` / `.char-allegiance` (`<name>`) / `.char-level` (20px gold, right-aligned; `.unknown` shows "Level ?"). Lua `factsFor(id)` calls `csp.Lookup(id)` → JSON → row data. `logDebug()` prints `[CharacterSelect] ...` to the log.
 - Capture path: `OnLogin_PlayerDescription` → read IntProperties[25] + StringProperties[47] (fallback StringProperties[11] = MonarchsName when 47 is empty) → `CurrentCharacter()` (reflection Game.Character.Id/Name) → `CharacterStore.Record`.
+
+## 0.1.7 — multi-character layout fix (2026-08-30)
+
+0.1.6 user round on a 9-character account ("really weird shit"): the log proved the data path perfect (9 rows, `Jochi 275`, `Muckfuppet 275`, `Hot Goat Summer 17`, six level-0s) — the breakage was two layout bugs:
+
+1. **All level numbers piled at the panel's top-right.** `.char-level` is `position: absolute`, but `#panel li` was never `position: relative`, so every row's number anchored to the **#panel** instead of its row. With one character it coincidentally looked right — row 1's top == panel content top, which was ALSO the real explanation for 0.1.5's "level touching the top edge" (the 0.1.6 4px nudge only moved the pile). Fix: `#panel li { position: relative; }` — each number now renders inside its own row.
+2. **Rows overflowed the panel art.** 9 × 42px = 378px > the 292px panel content; the last rows spilled over the bottom buttons. Fix: a `compact` row class (height 29px, name 12px, allegiance 9px, level 15px) applied from Lua when `#state.Characters > 6` — 29px × 10 = 290px fits the panel; 42px rows stay for ≤6 characters.
+
+Known limit: accounts with >10 characters (28px+ rows needed) would still overflow the panel — none seen (AC caps at 10).
+
+**Deployment status (2026-08-30, verified):** 12/12 tests; deployed; RML probed for `position: relative`, `li.compact { height: 29px`, `compact = #state.Characters > 6`; DLL probed for `0.1.7`.
 
 ## 0.1.6 — level number nudge (2026-08-30)
 

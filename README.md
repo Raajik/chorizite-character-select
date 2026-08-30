@@ -19,4 +19,4 @@ Deploy with `./scripts/deploy.sh` (copies into `C:/Games/Chorizite/plugins/Chara
 
 ## Status
 
-0.1.6 — level number nudged down inside its row (was touching the row's top edge); releases published for v0.1.2–v0.1.6.
+0.1.7 — multi-character layout: level numbers render inside their own row, compact rows keep all characters inside the panel; releases published for v0.1.2–v0.1.7.
