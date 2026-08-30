@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <LangVersion>12</LangVersion>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <OutputPath>bin\$(TargetFramework)\</OutputPath>
+    <IntermediateOutputPath>obj\$(TargetFramework)\</IntermediateOutputPath>
+    <DebugSymbols>true</DebugSymbols>
+    <DebugType>pdbonly</DebugType>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);1591</NoWarn>
+  </PropertyGroup>
+  <PropertyGroup>
+    <Title>Chorizite Character Select</Title>
+    <Product>Chorizite Character Select</Product>
+    <PackageId>Chorizite.Plugins.CharacterSelect</PackageId>
+    <Authors>Raajik</Authors>
+    <Company>Raajik</Company>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <Description>Enhanced character select screen for the Chorizite AC client: population readout, per-character last-known level and allegiance.</Description>
+    <RepositoryUrl>https://github.com/Raajik/chorizite-character-select</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Chorizite.Core" Version="0.0.13" ExcludeAssets="runtime" />
+    <PackageReference Include="Chorizite.Plugins.RmlUi" Version="0.0.9" ExcludeAssets="runtime" />
+    <PackageReference Include="RmlUi.Net" Version="1.0.1" ExcludeAssets="runtime" />
+    <PackageReference Include="Chorizite.Common" Version="1.0.2" ExcludeAssets="runtime" />
+    <PackageReference Include="Chorizite.ACProtocol" Version="1.0.1" ExcludeAssets="runtime" />
+    <PackageReference Include="Autofac" Version="8.2.0" ExcludeAssets="runtime" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.0" ExcludeAssets="runtime" />
+    <PackageReference Include="Chorizite.Plugins.MSBuildTasks" Version="0.0.4" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Update="manifest.json"><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory></None>
+    <None Update="assets\**\*"><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory></None>
+  </ItemGroup>
+</Project>
