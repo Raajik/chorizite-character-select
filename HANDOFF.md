@@ -9,7 +9,7 @@ Standalone Chorizite **Client-environment** plugin. Replaces the AC plugin's cha
 - Installed to: `C:\Games\Chorizite\plugins\CharacterSelect`
 - Runtime data: `C:\Games\Chorizite\data\CharacterSelect\` (`characters.json`, `settings.json`)
 - Depends on: AC plugin (`plugins\AC` 0.0.5), Lua 0.0.13, RmlUi 0.0.11, Chorizite 0.0.15 stack.
-- Current version: **0.1.8** · GitHub: https://github.com/Raajik/chorizite-character-select (CI on push/PR; tagging `v<manifest version>` publishes a release zip)
+- Current version: **0.2.0** · GitHub: https://github.com/Raajik/chorizite-character-select (CI on push/PR; tagging `v<manifest version>` publishes a release zip)
 
 ## Validated facts (all from decompiling the installed stack)
 
@@ -39,6 +39,12 @@ Standalone Chorizite **Client-environment** plugin. Replaces the AC plugin's cha
 - **Settings**: `CspSettings` (SkipIntro, MuteSelectSounds; both default true) + `CspSettingsContext` source-gen; `ISerializeSettings<CspSettings>` implemented explicitly on the plugin → `data/CharacterSelect/settings.json` handled by the loader. `SkipIntro`/`MuteSelectSounds` are `private set` — the only writer besides the ctor is `DeserializeAfterLoad`.
 - `assets/screens/CharSelect.rml`: stock layout + two-line population box (`.world-name` / `.world-population`), per-row `.char-name` / `.char-allegiance` (`<name>`) / `.char-level` (20px gold, right-aligned; `.unknown` shows "Level ?"). Lua `factsFor(id)` calls `csp.Lookup(id)` → JSON → row data. `logDebug()` prints `[CharacterSelect] ...` to the log.
 - Capture path: `OnLogin_PlayerDescription` → read IntProperties[25] + StringProperties[47] (fallback StringProperties[11] = MonarchsName when 47 is empty) → `CurrentCharacter()` (reflection Game.Character.Id/Name) → `CharacterStore.Record`.
+
+## 0.2.0 — pure-CSS reskin + allegiance capture (2026-08-30)
+
+1. **Allegiance capture (real fix)**: the player's own Login_PlayerDescription never carries AllegianceName on this server (all 9 chars had `allegiance=''`, incl. the 11/MonarchsName fallback). Probing Chorizite.ACProtocol 1.0.1 revealed the allegiance name rides a **dedicated S2C message**: `S2CMessageHandler.OnAllegiance_AllegianceUpdate` → args `Profile` (field) → `AllegianceHierarchy.AllegianceName` (also `MonarchData` available). The plugin now subscribes via the same closed-generic bridge (`OnAllegianceBridge<TArgs>` → `CaptureAllegianceFromUpdate`), records via `_store.Record(charId, name, 0, allegiance)` (level 0 preserves the recorded level), unsubscribes on Dispose. Caveat: the update fires when the allegiance is broadcast in-world (e.g. opening the allegiance panel), so allegiance data appears after that and persists.
+2. **Full reskin, pure RCSS**: body is now `gradient(vertical, #1c3450, #05090f)`; panel/world box/buttons are CSS cards (`#0d1b2acc` glass, `#3f6f96` borders, gold `#d6a845` accents/selected states). **Zero `dat://` references remain** (background, world box art, button art all replaced) — the theme can no longer break on dat differences between servers. Geometry (positions/sizes, `.char-level` 20px/top:4px/right:8px, world text at 35px/55px) unchanged. Row hover/selected use translucent gold instead of yellow/red.
+3. Structure tests: 15/15 (reskin assertions + allegiance capture assertions added).
 
 ## 0.1.8 — self-healing screen registration (brown-vanilla-screen fix) (2026-08-30)
 

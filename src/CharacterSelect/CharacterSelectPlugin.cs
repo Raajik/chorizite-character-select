@@ -54,6 +54,8 @@ public sealed class CharacterSelectPlugin : IPluginCore, ISerializeSettings<CspS
     private readonly CharacterStore _store;
     private EventInfo? _playerDescriptionEvent;
     private Delegate? _playerDescriptionHandler;
+    private EventInfo? _allegianceUpdateEvent;
+    private Delegate? _allegianceUpdateHandler;
     private object? _s2c;
     private IClientBackend? _clientBackend;
     private Timer? _uiWatchdog;
@@ -140,6 +142,24 @@ public sealed class CharacterSelectPlugin : IPluginCore, ISerializeSettings<CspS
             _playerDescriptionHandler = Delegate.CreateDelegate(handlerType, this, openBridge.MakeGenericMethod(argsType));
             eventInfo.AddEventHandler(s2c, _playerDescriptionHandler);
             _log.LogInformation("CharacterSelect: subscribed to OnLogin_PlayerDescription ({HandlerType})", handlerType.FullName);
+
+            // The player's own description rarely carries AllegianceName (47);
+            // the allegiance name arrives as its own S2C message
+            // (AllegianceUpdate -> Profile.Hierarchy.AllegianceName), typically
+            // when the allegiance is broadcast in-world.
+            var allegianceEvent = s2c.GetType().GetEvent("OnAllegiance_AllegianceUpdate");
+            if (allegianceEvent is not null) {
+                _allegianceUpdateEvent = allegianceEvent;
+                var allegianceHandlerType = allegianceEvent.EventHandlerType!;
+                var allegianceArgsType = allegianceHandlerType.GetMethod("Invoke")!.GetParameters()[1].ParameterType;
+                _allegianceUpdateHandler = Delegate.CreateDelegate(
+                    allegianceHandlerType, this, openBridge.MakeGenericMethod(allegianceArgsType));
+                allegianceEvent.AddEventHandler(s2c, _allegianceUpdateHandler);
+                _log.LogInformation("CharacterSelect: subscribed to OnAllegiance_AllegianceUpdate ({HandlerType})", allegianceHandlerType.FullName);
+            }
+            else {
+                _log.LogWarning("CharacterSelect: OnAllegiance_AllegianceUpdate event not found; allegiance capture limited to player description");
+            }
         }
         catch (Exception ex) {
             _log.LogError(ex, "CharacterSelect: failed to subscribe to player description events");
@@ -329,6 +349,40 @@ public sealed class CharacterSelectPlugin : IPluginCore, ISerializeSettings<CspS
     private void OnPlayerDescriptionBridge<TArgs>(object? sender, TArgs e) =>
         CaptureFromPlayerDescription(e!);
 
+    /// <summary>
+    /// Closed over the Allegiance_AllegianceUpdate args type at runtime (see
+    /// SubscribeCapture). The allegiance name lives at Profile.Hierarchy.AllegianceName.
+    /// </summary>
+    private void OnAllegianceBridge<TArgs>(object? sender, TArgs e) =>
+        CaptureAllegianceFromUpdate(e!);
+
+    private void CaptureAllegianceFromUpdate(object e) {
+        try {
+            var profile = GetMemberValue(e, "Profile");
+            var hierarchy = profile is null ? null : GetMemberValue(profile, "Hierarchy");
+            var allegianceName = (hierarchy is null ? null : GetMemberValue(hierarchy, "AllegianceName")) as string;
+            if (string.IsNullOrEmpty(allegianceName)) {
+                _log.LogDebug("CharacterSelect: allegiance update without a name");
+                return;
+            }
+
+            var (charId, charName) = CurrentCharacter();
+            if (charId == 0 || string.IsNullOrEmpty(charName)) {
+                _log.LogWarning("CharacterSelect: allegiance update but no current character known; not recording");
+                return;
+            }
+
+            // Level 0 preserves the level already on record (Record only
+            // overwrites fields with non-empty values).
+            _store.Record(charId, charName, 0, allegianceName);
+            _log.LogInformation("CharacterSelect captured allegiance '{Allegiance}' for {Name} (0x{Id:X8})",
+                allegianceName, charName, charId);
+        }
+        catch (Exception ex) {
+            _log.LogError(ex, "CharacterSelect: failed to capture allegiance update");
+        }
+    }
+
     private void CaptureFromPlayerDescription(object e) {
         try {
             var baseQualities = GetMemberValue(e, "BaseQualities");
@@ -461,6 +515,9 @@ public sealed class CharacterSelectPlugin : IPluginCore, ISerializeSettings<CspS
         try {
             if (_s2c is not null && _playerDescriptionEvent is not null && _playerDescriptionHandler is not null) {
                 _playerDescriptionEvent.RemoveEventHandler(_s2c, _playerDescriptionHandler);
+            }
+            if (_s2c is not null && _allegianceUpdateEvent is not null && _allegianceUpdateHandler is not null) {
+                _allegianceUpdateEvent.RemoveEventHandler(_s2c, _allegianceUpdateHandler);
             }
         }
         catch (Exception ex) {

@@ -19,4 +19,4 @@ Deploy with `./scripts/deploy.sh` (copies into `C:/Games/Chorizite/plugins/Chara
 
 ## Status
 
-0.1.8 — screen registration self-heals after mid-session plugin reload cycles (the intermittent vanilla-screen reversion); releases published for v0.1.2–v0.1.8.
+0.2.0 — pure-CSS reskin + allegiance capture from the dedicated allegiance S2C message; releases published for v0.1.2–v0.2.0.

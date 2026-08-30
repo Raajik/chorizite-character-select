@@ -5,7 +5,8 @@
               font-family: Tahoma;
               height: 100%;
               width: 100%;
-              decorator: image( dat://0x06004d63 );
+              /* v0.2.0 reskin: pure CSS theme, no dat art dependencies. */
+              decorator: gradient(vertical, #1c3450, #05090f);
               z-index: -5000;
             }
 
@@ -17,6 +18,9 @@
               width: 252px;
               padding: 4px;
               height: 300px;
+              background-color: #0d1b2acc;
+              border: 1px solid #3f6f96;
+              border-radius: 6px;
             }
 
             #panel li {
@@ -64,15 +68,20 @@
               position: absolute;
               display: inline-block;
               text-align: center;
+              background-color: #14263ccc;
+              border: 1px solid #3f6f96;
+              border-radius: 4px;
+              color: #e8eef5;
               width: 100px;
               height: 30px;
               line-height: 30px;
               font-size: 18dp;
-              font-effect: outline(2px black);
+              font-effect: outline(1px black);
             }
 
             button:hover {
-              decorator: image( dat://0x06004c9f );
+              background-color: #d6a84555;
+              border-color: #d6a845;
             }
 
             button#createcharacter {
@@ -88,7 +97,9 @@
 
             button#enter {
               display: block;
-              decorator: image( dat://0x06004CB2 );
+              background-color: #d6a84533;
+              border: 1px solid #d6a845;
+              border-radius: 8px;
               top: 290px;
               left: 340px;
               width: 211px;
@@ -99,7 +110,8 @@
             }
 
             button#enter:hover {
-              decorator: image( dat://0x06004CB3 );
+              background-color: #d6a84577;
+              border-color: #ffff00;
             }
 
             button#delete {
@@ -117,15 +129,8 @@
               left: 615px;
             }
 
-            /* Two-line world/population box: name on line 1, population on
-               line 2. The box art (dat://0x06004D64, 193x110) is a beveled
-               frame: opaque bands at rows 25-30 and 77-82, transparent
-               interior rows 31-76 (center y=53.5). The text lines are
-               absolutely positioned inside that interior — the previous
-               padding-based centering was not reliable and left the name
-               touching the top bevel. */
+ /* Two-line world/population box: name on line 1, population on line 2. The stock box art was a beveled frame with a transparent interior band (rows 31-76 of 110) - the text lines are absolutely positioned at the same visual spot now that the box is a pure-CSS card. */
             span#world {
-              decorator: image( dat://0x06004D64 );
               display: inline-block;
               width: 250px;
               height: 110px;
@@ -133,14 +138,17 @@
               position: absolute;
               top: 44px;
               left: 0px;
+              background-color: #0d1b2acc;
+              border: 1px solid #3f6f96;
+              border-radius: 6px;
             }
 
             .world-name { display: block; position: absolute; top: 35px; left: 0px; right: 0px; font-size: 16px; line-height: 20px; font-effect: outline(1px black); }
             .world-population { display: block; position: absolute; top: 55px; left: 0px; right: 0px; font-size: 13px; color: #d6a845; line-height: 16px; font-effect: none; }
 
-            li:hover { background-color: #ffff0099; }
-            li.selected { background-color: yellow; }
-            li:active { background-color: red; }
+            li:hover { background-color: #d6a84533; }
+            li.selected { background-color: #d6a84555; border: 1px solid #d6a84588; }
+            li:active { background-color: #d6a84577; }
     </style>
     <script type="">
       local rx = require('rx')

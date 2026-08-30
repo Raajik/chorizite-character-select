@@ -189,9 +189,9 @@ public class ScreenScriptTests {
     public void PopulationTextSitsInsideTheBoxArtInterior() {
         var rml = ReadRml();
 
-        // Box art 0x06004D64 is 193x110: opaque bevel rows 25-30 and 77-82,
-        // transparent interior rows 31-76. The text lines are absolutely
-        // positioned inside that interior (centered block: 35 + 20 + 16).
+        // v0.2.0 reskin: the world box is a pure-CSS card (no dat art); the
+        // text lines stay absolutely positioned (name at 35px, population at
+        // 55px) so both lines sit in the card's upper-middle.
         Assert.Matches(@"\.world-name \{[^}]*position: absolute; top: 35px", rml);
         Assert.Matches(@"\.world-population \{[^}]*position: absolute; top: 55px", rml);
         // The old padding-top approach (unreliable here) is gone.
@@ -210,5 +210,33 @@ public class ScreenScriptTests {
         // art (292px content: 42px x 6, or 29px x 10).
         Assert.Matches(@"#panel li\.compact \{[^}]*height: 29px", rml);
         Assert.Contains("compact = #state.Characters > 6", rml);
+    }
+
+    [Fact]
+    public void SkinIsPureCssWithNoDatArtDependencies() {
+        var rml = ReadRml();
+
+        // The stock look leaned on dat decorators (background, world box,
+        // button art). The reskin is pure RCSS: gradient background, CSS
+        // cards/buttons — zero dat:// references, so the theme cannot break
+        // when dat contents change between servers.
+        Assert.Contains("decorator: gradient(vertical", rml);
+        Assert.DoesNotContain("dat://", rml);
+        Assert.Contains("background-color: #0d1b2acc", rml);
+    }
+
+    [Fact]
+    public void AllegianceCapturedFromDedicatedS2CEvent() {
+        var cs = File.ReadAllText(Path.GetFullPath(Path.Combine(
+            AppContext.BaseDirectory, "..", "..", "..", "..", "..",
+            "src", "CharacterSelect", "CharacterSelectPlugin.cs")));
+
+        // The player description rarely carries AllegianceName (47); the name
+        // rides Allegiance_AllegianceUpdate -> Profile.Hierarchy.AllegianceName.
+        Assert.Contains("OnAllegiance_AllegianceUpdate", cs);
+        Assert.Contains("CaptureAllegianceFromUpdate", cs);
+        Assert.Contains("GetMemberValue(hierarchy, \"AllegianceName\")", cs);
+        // Level 0 preserves the recorded level when only the allegiance updates.
+        Assert.Contains("_store.Record(charId, charName, 0, allegianceName);", cs);
     }
 }
