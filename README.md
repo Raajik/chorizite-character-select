@@ -19,4 +19,4 @@ Deploy with `./scripts/deploy.sh` (copies into `C:/Games/Chorizite/plugins/Chara
 
 ## Status
 
-0.1.4 — intro skip, sound mute, monarch-name allegiance fallback, persisted settings; releases published for v0.1.2–v0.1.4.
+0.1.5 — level display fixed (XLua colon-call + json module shadowing), population box text repositioned inside the box art; releases published for v0.1.2–v0.1.5.

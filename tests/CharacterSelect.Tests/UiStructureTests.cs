@@ -137,4 +137,48 @@ public class FeatureWiringTests {
         Assert.Contains("CspSettingsContext.Default.CspSettings", cs);
         Assert.Contains("DeserializeAfterLoad(CspSettings? settings)", cs);
     }
+
+    [Fact]
+    public void BackendFallbackWaitsForAcPluginInstance() {
+        var cs = ReadPlugin();
+
+        // ACPlugin.Instance can be null when the AC plugin initializes after
+        // us; GetValue(null) there throws TargetException (0.1.3 log line).
+        Assert.Contains("acType is null || acInstance is null", cs);
+    }
+}
+
+public class ScreenScriptTests {
+    private static string ReadRml() =>
+        File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "assets", "screens", "CharSelect.rml"));
+
+    [Fact]
+    public void LuaCallsInstanceMethodsWithColonSyntaxAndNoShadowedJson() {
+        var rml = ReadRml();
+
+        // XLua: C# instance methods are called with COLON syntax. Dot syntax
+        // tries to convert the argument to the plugin instance and errors —
+        // the pcall in factsFor swallowed it, so rows always showed "Level ?".
+        Assert.Contains("csp[fnName](csp, id)", rml);
+        // The json module must come from require('json'); the JSON string
+        // must not shadow the module when decoding.
+        Assert.Contains("pcall(require, 'json')", rml);
+        Assert.Contains("pcall(jsonlib.decode, raw)", rml);
+        Assert.DoesNotContain("pcall(json.decode", rml);
+        // Primitive accessors exist on the plugin for the primary path.
+        Assert.Contains("callInstance('GetLevel', id)", rml);
+    }
+
+    [Fact]
+    public void PopulationTextSitsInsideTheBoxArtInterior() {
+        var rml = ReadRml();
+
+        // Box art 0x06004D64 is 193x110: opaque bevel rows 25-30 and 77-82,
+        // transparent interior rows 31-76. The text lines are absolutely
+        // positioned inside that interior (centered block: 35 + 20 + 16).
+        Assert.Matches(@"\.world-name \{[^}]*position: absolute; top: 35px", rml);
+        Assert.Matches(@"\.world-population \{[^}]*position: absolute; top: 55px", rml);
+        // The old padding-top approach (unreliable here) is gone.
+        Assert.DoesNotContain("padding-top", rml);
+    }
 }

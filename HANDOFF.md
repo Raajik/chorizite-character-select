@@ -9,7 +9,7 @@ Standalone Chorizite **Client-environment** plugin. Replaces the AC plugin's cha
 - Installed to: `C:\Games\Chorizite\plugins\CharacterSelect`
 - Runtime data: `C:\Games\Chorizite\data\CharacterSelect\` (`characters.json`, `settings.json`)
 - Depends on: AC plugin (`plugins\AC` 0.0.5), Lua 0.0.13, RmlUi 0.0.11, Chorizite 0.0.15 stack.
-- Current version: **0.1.4** · GitHub: https://github.com/Raajik/chorizite-character-select (CI on push/PR; tagging `v<manifest version>` publishes a release zip)
+- Current version: **0.1.5** · GitHub: https://github.com/Raajik/chorizite-character-select (CI on push/PR; tagging `v<manifest version>` publishes a release zip)
 
 ## Validated facts (all from decompiling the installed stack)
 
@@ -22,8 +22,11 @@ Standalone Chorizite **Client-environment** plugin. Replaces the AC plugin's cha
 - **Audio stack** (bootstrapper decompile): every DAT wave playback funnels through `ACChoriziteBackend.PlaySound(uint)` into a private `Dictionary<int, AudioPlaybackEngine> _audioEngines` (keyed by sample rate, engines created lazily on first PlaySound of that rate). **`AudioPlaybackEngine` has NO Volume property** — its private `outputDevice` field is a NAudio `WaveOutEvent`, which **does** have `float Volume { get; set; }` (backed by `waveOutSetVolume`; the getter reads a cached value, so polling it is cheap). Muting that per-engine device is the sanctioned cheap mute; no IL hook needed.
 - **Plugin settings contract** (Chorizite.Core decompile): a plugin implementing `ISerializeSettings<T>` (protected `TypeInfo: JsonTypeInfo<T>`, `SerializeBeforeUnload() → T`, `DeserializeAfterLoad(T?)`) gets `<DataDirectory>/settings.json` read at construction (before `Initialize()`) and written at unload. Implement `TypeInfo` via a source-gen `JsonSerializerContext` (in-box System.Text.Json; type identity with the host works because the package is `ExcludeAssets="runtime"`).
 - **XLua enum casting is unreliable**: `ac:SetScreen(GameScreen.CharCreate)` from RML Lua throws `invalid value for enum AC.Lib.Screens.GameScreen` (XLua ObjectCasters). **Pass the raw uint** (`268435467`) — pcall + fallback pattern in CharSelect.rml.
-- **XLua numbers surface as floats**: C# `int` properties read from Lua arrive as `0.0`/`128.0`. Format with `string.format("%d", v)` before display.
+- **XLua method calls need COLON syntax**: for C# *instance* methods, `csp:Method(id)` / `csp[fnName](csp, id)` is correct; `csp.Method(id)` (dot) tries to convert the first argument to the plugin object and errors. Properties are the opposite (`ac.ServerName`). Proven idiom in the same screen: `ac:Login(state.SelectedId)`. The 0.1.2 fix moved `Lookup` onto the instance but kept the dot call — the pcall in `factsFor` swallowed the error every time, so the display path never worked even when the store had data (0.1.5 finding).
+- **XLua numbers surface as floats**: C# `int` properties read from Lua arrive as `0.0`/`128.0`. Format with `string.format("%d", v)` before display (plain `tostring` renders "1.0").
 - **Lua↔C# visibility (critical)**: `require('Plugins.<Id>')` returns the plugin *instance object* (`AssemblyPluginInstance.Instance` = the IPluginCore). **XLua only sees instance members on it — a separate C# static class is invisible.** 0.1.1's `Lookup` sat in a static `CharacterStoreApi` class, so `csp.Lookup(id)` silently returned nil and every row showed `Level ?`. Fixed in 0.1.2 by moving `Lookup(uint)`/`Record(...)` onto the `CharacterSelectPlugin` instance (public instance methods).
+- **World box art geometry** (dat://0x06004D64, extracted 193×110 BGRA): fully transparent rows 0–24 and 83–109; opaque bevel bands rows 25–30 (bright cyan highlight) and 77–82 (bottom edge); **transparent interior rows 31–76 (45px tall, center y≈53.5)** with only thin side rails. The box art stretches horizontally to the 250px span. Text must sit inside rows ~31–76. The stock screen centered its single line via `line-height: 110px`.
+- **DAT extraction workflow** (works, no vision needed): AC client dats live at `C:\Games\RynthCore\AcClient\client_portal.dat`. Scratch console app (`A:\tmp\datprobe`) referencing **the Chorizite install's own** `DatReaderWriter.dll` + `SixLabors.ImageSharp.dll` (`<Reference><HintPath>C:\Games\Chorizite\...dll</HintPath>`); open with `new DatDatabase(o => o.FilePath = path, new StreamBlockAllocator(opts))`, `dat.TryGetFileBytes(id, out var bytes)`; SurfaceTexture (0x06) files parse as `[id u32][type u32 = 6][width u32][height u32][tag u32][len u32][raw BGRA...]` (big textures like the 0x06004d63 background embed JPEG instead). Then dump an ASCII density map (alpha+brightness per row) to "see" the art without model vision.
 - **WeakEvent gotcha**: AC's events are `WeakEvent<T>` — delegates are held by WeakReference with a keep-alive table keyed on `handler.Target`. A delegate created via `CreateDelegate(type, this, method)` keeps `this` alive as Target, so our subscription survives. If handlers ever silently stop firing, suspect the target being collected.
 - **RmlUi theme font**: theme.rcss declares `font-family: Tahoma` but only LatoLatin-Regular.ttf ships. Small text renders with a substitute and looks distorted at 12px with `font-effect: outline`. Population line: 13px, no outline, `line-height: 20px`.
 
@@ -36,6 +39,21 @@ Standalone Chorizite **Client-environment** plugin. Replaces the AC plugin's cha
 - **Settings**: `CspSettings` (SkipIntro, MuteSelectSounds; both default true) + `CspSettingsContext` source-gen; `ISerializeSettings<CspSettings>` implemented explicitly on the plugin → `data/CharacterSelect/settings.json` handled by the loader. `SkipIntro`/`MuteSelectSounds` are `private set` — the only writer besides the ctor is `DeserializeAfterLoad`.
 - `assets/screens/CharSelect.rml`: stock layout + two-line population box (`.world-name` / `.world-population`), per-row `.char-name` / `.char-allegiance` (`<name>`) / `.char-level` (20px gold, right-aligned; `.unknown` shows "Level ?"). Lua `factsFor(id)` calls `csp.Lookup(id)` → JSON → row data. `logDebug()` prints `[CharacterSelect] ...` to the log.
 - Capture path: `OnLogin_PlayerDescription` → read IntProperties[25] + StringProperties[47] (fallback StringProperties[11] = MonarchsName when 47 is empty) → `CurrentCharacter()` (reflection Game.Character.Id/Name) → `CharacterStore.Record`.
+
+## 0.1.5 — level display fix + population box geometry (2026-08-30)
+
+First 0.1.4 user round: intro skip ✓ (`queued CharacterManagementUI (268435466); intro skipped via screen change`), mute ✓ (`muted 1 audio engine(s)`), **capture ✓ (`captured Breeze (0x500002FA): level 1, allegiance ''`, characters.json created)** — but the row still rendered `Level ?` and the two-line box text clipped the art's top bevel.
+
+1. **`Level ?` root cause (two compounding Lua bugs, both now fixed):**
+   - **Dot-call on an XLua instance method**: `csp.Lookup(id)` tried to convert `id` to the plugin object and threw; the `pcall` in `factsFor` swallowed it, so facts were ALWAYS nil — 0.1.2's fix moved the method onto the instance but never fixed the call syntax. Instance methods are now invoked as `csp[fnName](csp, id)` with a dot-call fallback (both pcalled, first non-error result wins). Colon-call is the proven idiom (`ac:Login(...)`).
+   - **The `json` string shadowed the `json` module**: `local ok, json = pcall(...)` then `pcall(json.decode, json)` called `.decode` on a string — impossible by construction. Now `local okJson, jsonlib = pcall(require, 'json')` and `pcall(jsonlib.decode, raw)`.
+   - **Defense in depth**: the plugin now exposes primitive instance methods `GetLevel(uint) → int` (0 = unknown) and `GetAllegiance(uint) → string` ("" when unknown), tried FIRST so the Lua path doesn't depend on JSON or the json module at all. JSON `Lookup` remains the fallback. `tostring(char.Level)` → `string.format("%d", ...)` (float gotcha). New per-row debug line `row <Name> id=0x.. level=<L> allegiance='..'` makes the next log read conclusive.
+2. **Population box geometry**: extracted the box art (`dat://0x06004D64` → 193×110 BGRA via the datprobe workflow) and mapped it: opaque bevel rows 25–30/77–82, transparent interior 31–76. The old `padding-top: 30px` + 24px/20px line boxes left the name's cap top ≈36px — touching the bevel ("clipping the top edge"). The text lines are now **absolutely positioned inside the interior** (`.world-name` top: 35px, `.world-population` top: 55px, full-width + text-align center): name caps ≈39–51, population ≈58–71 → symmetric ~8px clearance from both bevels, no reliance on padding behavior.
+3. **Hardening**: `HookSoundIntroAndAudio`'s reflection fallback no longer calls `GetValue(null)` on a null `ACPlugin.Instance` (that was the 0.1.3-era `TargetException` log line; it would have silently disabled intro/mute on cold starts where AC initializes after us) — it now warns and returns.
+
+Regression coverage: `ScreenScriptTests` (colon-call + no shadowed json + primitive accessors; absolute text lines inside the art interior), `BackendFallbackWaitsForAcPluginInstance`.
+
+**Deployment + release status (2026-08-30, verified):** 11/11 tests; deployed; DLL probed for `GetLevel`/`GetAllegiance`/`0.1.5`; deployed RML probed for the new geometry + call syntax. Remaining gate: a client restart.
 
 ## 0.1.4 — intro skip, sound mute, monarch fallback, settings (2026-08-30)
 
@@ -74,11 +92,11 @@ The 0.1.2 user round produced two findings:
 
    **Status:** `2c728a0` pushed; tags `v0.1.2` + `v0.1.3` live with green CI, `CharacterSelect-v0.1.3.zip` published; deployed DLL byte-verified (UTF-16LE probe for `player description received but no current character known`). The 0.1.3 capture itself is still awaiting a client-restart validation — the 0.1.4 round tests it together with the new features.
 
-## Known issues / TODO (0.1.4)
+## Known issues / TODO (0.1.5)
 
 1. **Population counts showed `0` on Unfamiliar Shores both times** — verify `CurrentConnectionCount` updates (it comes from OnWorldInfo; may be server-dependent). Debug line `world info: ...` logs the values when received.
 2. **WaveOutEvent.Volume semantics**: `waveOutSetVolume` applies per waveOut device id, and `WaveOutEvent` opens the default device — muting zeroes the client's WinMM wave device, which is exactly "mute the client" (all DAT playback goes through these engines) but is restored to 1.0 whenever gameplay is entered and on Dispose. If a user ever reports other audio being affected, that's why.
-3. **Allegiance fallback upgrade path**: MonarchsName may be missing too on some servers; the full fallback is `InstanceValues[Monarch=26]` → `World.Get(monarchId).Name` while in-world.
+3. **Allegiance fallback upgrade path**: MonarchsName may be missing too on some servers; the full fallback is `InstanceValues[Monarch=26]` → `World.Get(monarchId).Name` while in-world. (Observed so far: allegiance '' for a fresh level-1 character — correct, no allegiance.)
 4. **No in-game settings UI**: toggling requires editing `settings.json` + client restart. Chorizite's plugin framework may support a settings view later.
 5. **User report (won't fix here)**: Chorizite bar plugin icons are unclickable in-game — that's core/launcher behavior, unrelated to this plugin.
 
@@ -98,14 +116,12 @@ cd A:/ai/projects/chorizite-mods/chorizite-character-select
 CHORIZITE_HOME='D:/Games/Chorizite' "C:/Program Files/Git/bin/bash.exe" scripts/deploy.sh
 ```
 
-8 structural tests assert on the RML/plugin source (two-line population, row layout, capture+property IDs, exact-signature capture bridge, typed intro-skip wiring + UIMode constants, audio-engine mute path, monarch fallback, settings contract).
+8 structural tests assert on the RML/plugin source (two-line population, row layout, capture+property IDs, exact-signature capture bridge, typed intro-skip wiring + UIMode constants, audio-engine mute path, monarch fallback, settings contract, XLua colon-call script path, box-art text geometry).
 
-## Test checklist for next user round (0.1.4)
+## Test checklist for next user round (0.1.5)
 
-1. Restart the client so the 0.1.4 DLL loads (the deployed DLL is verified — see Deployment status). Startup log should show: `CharacterSelect settings loaded: skipIntro=True, muteSounds=True` (first run: no settings.json yet, so that line is absent — fine), `subscribed to OnLogin_PlayerDescription` with the resolved `EventHandler`1[...Login_PlayerDescription...]` type and NO ArgumentException, `subscribed to UIBackend.OnScreenChanged (backend=ACChoriziteBackend)`, and `CharacterSelect 0.1.4 initialized`.
-2. **Intro**: the intro videos should not play — the log should show `queued CharacterManagementUI (268435466); intro skipped via initialize` or `... via watchdog`, landing straight on the (our) CharSelect screen.
-3. **Mute**: no char-select / login sounds should play; the log shows `muted N audio engine(s) (screen=...)`. Sounds must return inside the game (`restored volume on ...` once GamePlayUI is reached). If music is wanted at the char screen, set `MuteSelectSounds: false` in `data/CharacterSelect/settings.json` and restart.
-4. **Capture** (0.1.3 fix, still pending first live validation): log into a character → log shows `CharacterSelect captured <name> (0x...): level N, allegiance '...'` (possibly preceded by `using monarch name '...' as allegiance`); `data\CharacterSelect\characters.json` exists.
-5. Log out → the character row shows the level number instead of `Level ?` (and the allegiance line).
-6. Population line remains server-dependent (OnWorldInfo) — Unfamiliar Shores showed `0` both times (known issue 1).
-7. Do not open the Plugin Manager UI in-world right before logging out — it re-shows stuck over the CharSelect screen (0.1.3 finding 1).
+1. Restart the client (0.1.5 deployed + verified). Startup log should show `CharacterSelect 0.1.5 initialized` plus the 0.1.4 hook lines (`subscribed to OnLogin_PlayerDescription`, `subscribed to UIBackend.OnScreenChanged (backend=ACChoriziteBackend)`), NO ArgumentException/TargetException.
+2. **Level display**: the char select screen should now show `1` (gold, right) for Breeze instead of `Level ?` — the store already contains `Breeze level 1` from the 0.1.4 round, and the Lua path is fixed (colon calls + primitive `GetLevel`). Log shows `row Breeze id=500002FA level=1 allegiance=''` when the screen loads. If it STILL shows `Level ?`, the `row ...` line tells us whether facts resolved (level=1 → RML/CSS issue) or not (XLua call issue).
+3. **Population box**: server name + `Population: X / 128` should sit centered inside the box's beveled interior with clear space above/below — no clipping at the top edge.
+4. Intro skip + mute as in the 0.1.4 round: no intro videos, no select/login sounds, sounds return in-game.
+5. Population count remains server-dependent (known issue 1). Do not open the Plugin Manager UI in-world right before logging out (0.1.3 finding 1).

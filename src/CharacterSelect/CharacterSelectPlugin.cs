@@ -156,10 +156,16 @@ public sealed class CharacterSelectPlugin : IPluginCore, ISerializeSettings<CspS
         try {
             if (_clientBackend is null) {
                 // The loader only injects IClientBackend when the DI container
-                // registers it; fall back to ACPlugin.ClientBackend.
+                // registers it; fall back to ACPlugin.ClientBackend. Both the
+                // type and the instance must exist — GetValue(null) throws
+                // TargetException when the AC plugin has not initialized yet.
                 var acType = FindAcPluginType();
                 var acInstance = GetAcInstance(acType);
-                if (acType?.GetProperty("ClientBackend", BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(acInstance) is IClientBackend backend) {
+                if (acType is null || acInstance is null) {
+                    _log.LogWarning("CharacterSelect: AC plugin not ready for the ClientBackend fallback (loads later?); intro-skip and mute disabled this session");
+                    return;
+                }
+                if (acType.GetProperty("ClientBackend", BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(acInstance) is IClientBackend backend) {
                     _clientBackend = backend;
                 }
             }
@@ -414,6 +420,12 @@ public sealed class CharacterSelectPlugin : IPluginCore, ISerializeSettings<CspS
     public void Record(uint id, string name, int level, string allegiance) {
         _store.Record(id, name, level, allegiance);
     }
+
+    /// <summary>Last-known level for a character id (0 = unknown). Instance method: callable from Lua as csp:GetLevel(id).</summary>
+    public int GetLevel(uint id) => _store.TryGet(id, out var info) ? info.Level : 0;
+
+    /// <summary>Last-known allegiance for a character id ("" when unknown). Instance method: callable from Lua as csp:GetAllegiance(id).</summary>
+    public string GetAllegiance(uint id) => _store.TryGet(id, out var info) ? info.Allegiance : "";
 
     protected override void Dispose() {
         _uiWatchdog?.Dispose();

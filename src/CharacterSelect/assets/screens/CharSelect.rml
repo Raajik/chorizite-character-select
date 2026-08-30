@@ -109,7 +109,12 @@
             }
 
             /* Two-line world/population box: name on line 1, population on
-               line 2, both centered inside the decorated image box. */
+               line 2. The box art (dat://0x06004D64, 193x110) is a beveled
+               frame: opaque bands at rows 25-30 and 77-82, transparent
+               interior rows 31-76 (center y=53.5). The text lines are
+               absolutely positioned inside that interior — the previous
+               padding-based centering was not reliable and left the name
+               touching the top bevel. */
             span#world {
               decorator: image( dat://0x06004D64 );
               display: inline-block;
@@ -119,11 +124,10 @@
               position: absolute;
               top: 44px;
               left: 0px;
-              padding-top: 30px;
             }
 
-            .world-name { display: block; font-size: 16px; line-height: 24px; font-effect: outline(1px black); }
-            .world-population { font-size: 13px; color: #d6a845; line-height: 20px; font-effect: none; }
+            .world-name { display: block; position: absolute; top: 35px; left: 0px; right: 0px; font-size: 16px; line-height: 20px; font-effect: outline(1px black); }
+            .world-population { display: block; position: absolute; top: 55px; left: 0px; right: 0px; font-size: 13px; color: #d6a845; line-height: 16px; font-effect: none; }
 
             li:hover { background-color: #ffff0099; }
             li.selected { background-color: yellow; }
@@ -174,10 +178,36 @@
       updatePopulation()
 
       -- Per-character display facts from the plugin's persisted store.
+      -- XLua idiom: C# INSTANCE methods are called with COLON syntax
+      -- (csp:GetLevel(id) passes the plugin instance as self); dot syntax
+      -- (csp.Lookup(id)) tries to convert the number to the plugin object
+      -- and errors — the pcall swallowed that, so rows always showed
+      -- "Level ?" even when the store had the data. Try primitives first,
+      -- then the JSON blob with a properly-required json module (the old
+      -- code shadowed the module with the JSON string and decoded the
+      -- string itself, which can never work).
+      local okJson, jsonlib = pcall(require, 'json')
+
+      local function callInstance(fnName, id)
+        local ok, res = pcall(function() return csp[fnName](csp, id) end)
+        if ok then return res end
+        ok, res = pcall(function() return csp[fnName](id) end)
+        if ok then return res end
+        return nil
+      end
+
       local function factsFor(id)
-        local ok, json = pcall(function() return csp.Lookup(id) end)
-        if ok and json ~= nil and #json > 0 then
-          local okDecode, decoded = pcall(json.decode, json)
+        local lvl = callInstance('GetLevel', id)
+        if type(lvl) == 'number' then
+          local alg = callInstance('GetAllegiance', id) or ''
+          if type(alg) ~= 'string' then alg = tostring(alg or '') end
+          return { Level = lvl, Allegiance = alg }
+        end
+
+        -- Fallback: JSON blob via Lookup, decoded with the json module.
+        local raw = callInstance('Lookup', id)
+        if okJson and type(raw) == 'string' and #raw > 0 then
+          local okDecode, decoded = pcall(jsonlib.decode, raw)
           if okDecode and type(decoded) == 'table' then return decoded end
         end
         return nil
@@ -199,6 +229,9 @@
           state.SelectedId = list[1].Id
           state.SelectedName = list[1].Name
         end
+        for i, k in ipairs(list) do
+          logDebug("row " .. k.Name .. " id=" .. tostring(k.Id) .. " level=" .. tostring(k.Level) .. " allegiance='" .. tostring(k.Allegiance) .. "'")
+        end
         logDebug("characters: " .. #list)
       end
 
@@ -216,7 +249,9 @@
       local function CharacterRow(char)
         local levelLabel = "Level ?"
         if char.Level ~= nil and char.Level > 0 then
-          levelLabel = tostring(char.Level)
+          -- XLua numbers surface as floats (0.0/1.0); tostring would render
+          -- "1.0", so format through %d.
+          levelLabel = string.format("%d", char.Level)
         end
         local allegianceText = ""
         if char.Allegiance ~= nil and #char.Allegiance > 0 then
