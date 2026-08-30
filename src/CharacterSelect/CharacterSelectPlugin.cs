@@ -39,7 +39,6 @@ public sealed class CharacterSelectPlugin : IPluginCore {
         ILogger<CharacterSelectPlugin> log) : base(manifest) {
         _log = log;
         _store = new CharacterStore(DataDirectory);
-        CharacterStoreApi.Inject(_store, _log);
     }
 
     protected override void Initialize() {
@@ -300,28 +299,17 @@ public sealed class CharacterSelectPlugin : IPluginCore {
             _log.LogWarning(ex, "CharacterSelect: unsubscribe failed");
         }
     }
-}
-
-/// <summary>Lua-facing bridge for the screen script.</summary>
-public static class CharacterStoreApi {
-    private static CharacterStore? _store;
-    private static ILogger? _log;
-
-    internal static void Inject(CharacterStore store, ILogger log) {
-        _store = store;
-        _log = log;
-    }
-
-    /// <summary>Called from the screen's Lua to record facts captured in-world.</summary>
-    public static void Record(uint id, string name, int level, string allegiance) {
-        _store?.Record(id, name, level, allegiance);
-    }
-
-    /// <summary>JSON blob for one character, or null when unknown.</summary>
-    public static string? Lookup(uint id) {
-        if (_store is null) return null;
+    /// <summary>JSON blob for one character, or null when unknown. Called from the screen's Lua.</summary>
+    /// <remarks>Must be an INSTANCE method: require('Plugins.CharacterSelect') from Lua returns the
+    /// plugin instance object, and XLua can only see instance members on it — static classes are invisible.</remarks>
+    public string? Lookup(uint id) {
         return _store.TryGet(id, out var info)
             ? System.Text.Json.JsonSerializer.Serialize(info)
             : null;
+    }
+
+    /// <summary>Records facts captured in-world. Callable from Lua (instance method).</summary>
+    public void Record(uint id, string name, int level, string allegiance) {
+        _store.Record(id, name, level, allegiance);
     }
 }

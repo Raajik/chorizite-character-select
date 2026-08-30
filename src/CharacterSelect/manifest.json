@@ -3,7 +3,7 @@
   "name": "Character Select Plus",
   "author": "Raajik",
   "entryfile": "CharacterSelect.dll",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Enhanced character select screen: population box, last-known level, and allegiance per character.",
   "repo": "https://github.com/Raajik/chorizite-character-select",
   "dependencies": [
