@@ -119,11 +119,11 @@
               position: absolute;
               top: 44px;
               left: 0px;
-              padding-top: 26px;
+              padding-top: 30px;
             }
 
-            .world-name { display: block; font-size: 18px; line-height: 26px; font-effect: outline(1px black); }
-            .world-population { font-size: 12px; color: #d6a845; line-height: 18px; font-effect: outline(1px black); }
+            .world-name { display: block; font-size: 16px; line-height: 24px; font-effect: outline(1px black); }
+            .world-population { font-size: 13px; color: #d6a845; line-height: 20px; font-effect: none; }
 
             li:hover { background-color: #ffff0099; }
             li.selected { background-color: yellow; }
@@ -141,14 +141,37 @@
         print("[CharacterSelect] " .. tostring(msg))
       end
 
+      -- Debug: what does the CS enum resolve to from this script's context?
+      logDebug("GameScreen table: " .. tostring(GameScreen))
+      local okEnum, charCreateVal = pcall(function() return GameScreen.CharCreate end)
+      if okEnum then
+        logDebug("GameScreen.CharCreate = " .. tostring(charCreateVal))
+      else
+        logDebug("GameScreen.CharCreate FAILED: " .. tostring(charCreateVal))
+      end
+
+
       local state = rx:CreateState({
         SelectedId = 0,
         SelectedName = "",
         ServerName = ac.ServerName,
-        MaxAllowedConnections = ac.MaxAllowedConnections,
-        CurrentConnectionCount = ac.CurrentConnectionCount,
+        Population = "",
         Characters = {}
       })
+
+      -- Format "cur / max" defensively: the C# ints can surface as floats
+      -- through XLua (0.0 / 128.0), so strip trailing .0.
+      local function fmtInt(v)
+        local n = tonumber(v) or 0
+        return string.format("%d", n)
+      end
+
+      local function updatePopulation()
+        state.ServerName = ac.ServerName or ""
+        state.Population = fmtInt(ac.CurrentConnectionCount) .. " / " .. fmtInt(ac.MaxAllowedConnections)
+      end
+
+      updatePopulation()
 
       -- Per-character display facts from the plugin's persisted store.
       local function factsFor(id)
@@ -184,10 +207,8 @@
       logDebug("screen loaded; characters known to client: " .. #state.Characters)
 
       ac:OnWorldInfo('+', function()
-        state.ServerName = ac.ServerName
-        state.MaxAllowedConnections = ac.MaxAllowedConnections
-        state.CurrentConnectionCount = ac.CurrentConnectionCount
-        logDebug("world info: " .. tostring(state.ServerName) .. " " .. tostring(state.CurrentConnectionCount) .. "/" .. tostring(state.MaxAllowedConnections))
+        updatePopulation()
+        logDebug("world info: " .. tostring(state.ServerName) .. " " .. tostring(state.Population))
       end)
 
       ac:OnCharactersChanged('+', UpdateCharacters)
@@ -222,7 +243,7 @@
         return rx:Div({ class="wrapper" }, {
           rx:Span({ id="world" }, {
             rx:Span(state.ServerName, { class = "world-name" }),
-            rx:Span("Population: " .. state.CurrentConnectionCount .. " / " .. state.MaxAllowedConnections, { class = "world-population" })
+            rx:Span("Population: " .. (state.Population or ""), { class = "world-population" })
           }),
           rx:Button({ id="exit", onclick = function(evt)
             ui.PanelManager:ShowModalConfirmation("Are you sure you want to exit?", function(res)
@@ -236,7 +257,15 @@
               ac:Login(state.SelectedId)
             end
           end }, "ENTER"),
-          rx:Button({ id="createcharacter", onclick = function(evt) ac:SetScreen(GameScreen.CharCreate) end }, "Create Character"),
+          rx:Button({ id="createcharacter", onclick = function(evt)
+            -- XLua fails to cast GameScreen.CharCreate by value in some
+            -- contexts ("invalid value for enum"); the numeric value works.
+            local okSet, err = pcall(function() ac:SetScreen(GameScreen.CharCreate) end)
+            if not okSet then
+              logDebug("SetScreen(CharCreate) failed: " .. tostring(err) .. "; retrying with raw value")
+              pcall(function() ac:SetScreen(268435467) end)
+            end
+          end }, "Create Character"),
           rx:Button({ id="credits", onclick = function(evt) ac:SetScreen(GameScreen.Credits) end }, "CREDITS"),
           rx:Button({ id="delete", disabled="disabled", onclick = function(evt) print("DELETE!!") end }, "DELETE"),
           rx:Div({ id="panel" },

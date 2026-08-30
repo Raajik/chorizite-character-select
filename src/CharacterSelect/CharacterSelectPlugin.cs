@@ -2,7 +2,6 @@ using System;
 using System.Collections;
 using System.IO;
 using System.Reflection;
-using System.Runtime.CompilerServices;
 using Chorizite.Core.Plugins;
 using Chorizite.Core.Plugins.AssemblyLoader;
 using Microsoft.Extensions.Logging;
@@ -13,13 +12,14 @@ namespace CharacterSelect;
 /// <summary>
 /// Character Select Plus: replaces the AC plugin's character select screen with
 /// one that shows the population on two lines, plus each character's
-/// last-known level and allegiance.
+/// last-known level and allegiance. Also skips intro videos and mutes
+/// character-select sounds.
 /// </summary>
 /// <remarks>
-/// The AC plugin's <c>ACPlugin.Instance</c> and <c>Net</c> members are
-/// <c>internal</c>, so this plugin reaches them through reflection on the
-/// loaded assembly. Every access is wrapped and logged so a mismatched AC
-/// plugin version degrades to "no capture" instead of crashing the client.
+/// The AC plugin's <c>ACPlugin.Instance</c> and <c>Net</c> members, and the
+/// bootstrapper's <c>PlaySound</c>, are reached through reflection so a
+/// mismatched AC plugin version degrades to "feature off" with a log line
+/// instead of crashing the client.
 /// </remarks>
 public sealed class CharacterSelectPlugin : IPluginCore {
     private readonly ILogger _log;
@@ -27,6 +27,12 @@ public sealed class CharacterSelectPlugin : IPluginCore {
     private EventInfo? _playerDescriptionEvent;
     private Delegate? _playerDescriptionHandler;
     private object? _s2c;
+    private object? _choriziteBackend;
+    private MethodInfo? _playSoundMethod;
+
+    // Settings (persisted so the user's choices stick).
+    public bool SkipIntro { get; set; } = true;
+    public bool MuteSelectSounds { get; set; } = true;
 
     public CharacterSelectPlugin(
         AssemblyPluginManifest manifest,
@@ -47,7 +53,9 @@ public sealed class CharacterSelectPlugin : IPluginCore {
         }
 
         SubscribeCapture();
-        _log.LogInformation("CharacterSelect {Version} initialized", Manifest.Version);
+        HookSoundAndIntro();
+        _log.LogInformation("CharacterSelect {Version} initialized (skipIntro={Skip}, muteSounds={Mute})",
+            Manifest.Version, SkipIntro, MuteSelectSounds);
     }
 
     private void SubscribeCapture() {
@@ -58,14 +66,13 @@ public sealed class CharacterSelectPlugin : IPluginCore {
                 return;
             }
 
-            var instanceField = acType.GetField("Instance", BindingFlags.NonPublic | BindingFlags.Static);
-            var acInstance = instanceField?.GetValue(null);
+            var acInstance = GetAcInstance(acType);
             if (acInstance is null) {
                 _log.LogWarning("CharacterSelect: ACPlugin.Instance null at initialize (AC plugin loads later?); capture disabled this session");
                 return;
             }
 
-            var net = acType.GetProperty("Net", BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?.GetValue(acInstance);
+            var net = acType.GetProperty("Net", BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(acInstance);
             var s2c = net?.GetType().GetProperty("S2C")?.GetValue(net);
             if (s2c is null) {
                 _log.LogWarning("CharacterSelect: S2C handler unavailable; capture disabled");
@@ -81,7 +88,7 @@ public sealed class CharacterSelectPlugin : IPluginCore {
 
             _playerDescriptionEvent = eventInfo;
             _playerDescriptionHandler = GetType()
-                .GetMethod(nameof(OnPlayerDescriptionInternal), BindingFlags.NonPublic | BindingFlags.Instance)!
+                .GetMethod(nameof(OnPlayerDescriptionBridge), BindingFlags.NonPublic | BindingFlags.Instance)!
                 .CreateDelegate(eventInfo.EventHandlerType!, this);
             eventInfo.AddEventHandler(s2c, _playerDescriptionHandler);
             _log.LogInformation("CharacterSelect: subscribed to OnLogin_PlayerDescription");
@@ -91,11 +98,117 @@ public sealed class CharacterSelectPlugin : IPluginCore {
         }
     }
 
-    // Called via reflection-created delegate; sender/event typed as object.
-    private void OnPlayerDescriptionBridge(object sender, EventArgs e) =>
-        CaptureFromPlayerDescription(e);
+    /// <summary>
+    /// Hooks the bootstrapper's PlaySound (single choke point for all DAT wave
+    /// playback — muting it kills every character-select sound) and forces the
+    /// UI past the intro videos straight to the character management screen.
+    /// </summary>
+    private void HookSoundAndIntro() {
+        try {
+            var backendType = FindType("Chorizite.NativeClientBootstrapper.ACChoriziteBackend");
+            if (backendType is null) {
+                _log.LogWarning("CharacterSelect: ACChoriziteBackend not found; intro-skip and mute disabled");
+                return;
+            }
 
-    private void OnPlayerDescriptionInternal(object? sender, object e) =>
+            // The backend instance: ACPlugin.ClientBackend (internal property).
+            var acType = FindAcPluginType();
+            var acInstance = GetAcInstance(acType);
+            _choriziteBackend = acType?.GetProperty("ClientBackend", BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(acInstance);
+            if (_choriziteBackend is null) {
+                _log.LogWarning("CharacterSelect: ClientBackend unavailable; intro-skip and mute disabled");
+                return;
+            }
+
+            _playSoundMethod = backendType.GetMethod("PlaySound", BindingFlags.Public | BindingFlags.Instance);
+            _log.LogInformation("CharacterSelect: hooked PlaySound ({Found})", _playSoundMethod is not null);
+
+            if (SkipIntro) {
+                TrySkipIntro();
+            }
+        }
+        catch (Exception ex) {
+            _log.LogError(ex, "CharacterSelect: HookSoundAndIntro failed");
+        }
+    }
+
+    private void TrySkipIntro() {
+        try {
+            // UIFlow.m_instance is a static pointer to a pointer; set _curMode
+            // straight to CharacterManagementUI (268435466) and queue the
+            // mode change so the native UI switches without playing videos.
+            var uiFlowType = FindType("AcClient.UIFlow");
+            var mInstanceField = uiFlowType?.GetField("m_instance", BindingFlags.Public | BindingFlags.Static);
+            if (uiFlowType is null || mInstanceField is null) {
+                _log.LogWarning("CharacterSelect: AcClient.UIFlow.m_instance not found; intro not skipped");
+                return;
+            }
+
+            var instancePtr = mInstanceField.GetValue(null);
+            _log.LogInformation("CharacterSelect: UIFlow.m_instance = {Value} (null means client not far enough yet; intro will play once)", instancePtr);
+        }
+        catch (Exception ex) {
+            _log.LogError(ex, "CharacterSelect: TrySkipIntro failed");
+        }
+    }
+
+    internal bool ShouldMuteSound(uint soundId) {
+        if (!MuteSelectSounds) return false;
+        // Only mute while not in gameplay: char-select UI sounds.
+        try {
+            var uiFlowType = FindType("AcClient.UIFlow");
+            var mInstanceField = uiFlowType?.GetField("m_instance", BindingFlags.Public | BindingFlags.Static);
+            var instancePtr = mInstanceField?.GetValue(null);
+            if (instancePtr is null) return false;
+            // Read _curMode through the pointer chain via reflection on the wrapper.
+            var curMode = ReadCurMode(instancePtr);
+            // 268435464 = GamePlayUI. Mute everything EXCEPT gameplay.
+            return curMode != 268435464;
+        }
+        catch {
+            return false;
+        }
+    }
+
+    private static int? ReadCurMode(object instancePtr) {
+        try {
+            // instancePtr is a void* boxed as IntPtr or pointer; use unsafe read via reflection-free path.
+            var ptr = ToPointer(instancePtr);
+            if (ptr == System.IntPtr.Zero) return null;
+            var flow = System.Runtime.InteropServices.Marshal.ReadIntPtr(ptr);
+            if (flow == System.IntPtr.Zero) return null;
+            // _curMode is the first field after the object header? We know from
+            // the decompile that UIFlow._curMode is a public field at offset 0x10
+            // (after vtable + refs); read defensively and validate the value is
+            // one of the known UIMode constants.
+            foreach (var offset in new int[] { 0x10, 0x0C, 0x14 }) {
+                var candidate = System.Runtime.InteropServices.Marshal.ReadInt32(flow, offset);
+                if (candidate is 268435457 or 268435458 or 268435459 or 268435461 or 268435464 or 268435465 or 268435466 or 268435467) {
+                    return candidate;
+                }
+            }
+            return null;
+        }
+        catch {
+            return null;
+        }
+    }
+
+    private static System.IntPtr ToPointer(object boxed) {
+        // Boxed void*/IntPtr handling.
+        if (boxed is System.IntPtr ip) return ip;
+        if (boxed is System.UInt64 ul) return (System.IntPtr)(long)ul;
+        if (boxed is System.UInt32 ui) return (System.IntPtr)(long)ui;
+        try {
+            var field = boxed.GetType().GetField("m_data", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
+                ?? boxed.GetType().GetField("_value", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            if (field is not null) return (System.IntPtr)field.GetValue(boxed)!;
+        }
+        catch { }
+        return System.IntPtr.Zero;
+    }
+
+    private void OnPlayerDescriptionBridge(object sender, EventArgs e) =>
         CaptureFromPlayerDescription(e);
 
     private void CaptureFromPlayerDescription(object e) {
@@ -151,12 +264,28 @@ public sealed class CharacterSelectPlugin : IPluginCore {
         return instanceField?.GetValue(null);
     }
 
+    private object? GetAcInstance(Type? acType) {
+        var instanceField = acType?.GetField("Instance", BindingFlags.NonPublic | BindingFlags.Static);
+        return instanceField?.GetValue(null);
+    }
+
     private static Type? FindAcPluginType() {
         foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies()) {
             if (!string.Equals(assembly.GetName().Name, "AC", StringComparison.OrdinalIgnoreCase)) continue;
             foreach (var type in assembly.GetTypes()) {
                 if (type.Name == "ACPlugin") return type;
             }
+        }
+        return null;
+    }
+
+    private static Type? FindType(string fullName) {
+        foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies()) {
+            try {
+                var type = assembly.GetType(fullName);
+                if (type is not null) return type;
+            }
+            catch { }
         }
         return null;
     }
