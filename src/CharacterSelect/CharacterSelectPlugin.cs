@@ -86,11 +86,19 @@ public sealed class CharacterSelectPlugin : IPluginCore {
             }
 
             _playerDescriptionEvent = eventInfo;
-            _playerDescriptionHandler = GetType()
-                .GetMethod(nameof(OnPlayerDescriptionBridge), BindingFlags.NonPublic | BindingFlags.Instance)!
-                .CreateDelegate(eventInfo.EventHandlerType!, this);
+            var handlerType = eventInfo.EventHandlerType!;
+            var argsType = handlerType.GetMethod("Invoke")!.GetParameters()[1].ParameterType;
+            var openBridge = GetType().GetMethod(
+                nameof(OnPlayerDescriptionBridge), BindingFlags.NonPublic | BindingFlags.Instance)!;
+            // Delegate.CreateDelegate demands EXACT parameter types. The AC
+            // plugin's event-args type cannot be named at compile time, so close
+            // the generic bridge over the type taken from the delegate itself and
+            // bind `this` as the instance target. The previous (object, EventArgs)
+            // bridge could never bind (ArgumentException at every startup), so
+            // capture never fired and no character ever got a level.
+            _playerDescriptionHandler = Delegate.CreateDelegate(handlerType, this, openBridge.MakeGenericMethod(argsType));
             eventInfo.AddEventHandler(s2c, _playerDescriptionHandler);
-            _log.LogInformation("CharacterSelect: subscribed to OnLogin_PlayerDescription");
+            _log.LogInformation("CharacterSelect: subscribed to OnLogin_PlayerDescription ({HandlerType})", handlerType.FullName);
         }
         catch (Exception ex) {
             _log.LogError(ex, "CharacterSelect: failed to subscribe to player description events");
@@ -207,13 +215,19 @@ public sealed class CharacterSelectPlugin : IPluginCore {
         return System.IntPtr.Zero;
     }
 
-    private void OnPlayerDescriptionBridge(object sender, EventArgs e) =>
-        CaptureFromPlayerDescription(e);
+    /// <summary>
+    /// Closed over the real event-args type at runtime (see SubscribeCapture).
+    /// Once the generic parameter is fixed, the remaining signature
+    /// (object sender, TArgs e) exactly matches EventHandler&lt;TArgs&gt; — and any
+    /// custom delegate with the same shape — so CreateDelegate can bind it with
+    /// this instance as target (which also keeps the WeakEvent subscription alive).
+    /// </summary>
+    private void OnPlayerDescriptionBridge<TArgs>(object? sender, TArgs e) =>
+        CaptureFromPlayerDescription(e!);
 
     private void CaptureFromPlayerDescription(object e) {
         try {
-            var eType = e.GetType();
-            var baseQualities = eType.GetField("BaseQualities")?.GetValue(e);
+            var baseQualities = GetMemberValue(e, "BaseQualities");
             if (baseQualities is null) {
                 _log.LogWarning("CharacterSelect: Login_PlayerDescription.BaseQualities was null");
                 return;
@@ -222,29 +236,39 @@ public sealed class CharacterSelectPlugin : IPluginCore {
             var level = 0;
             var allegiance = "";
 
-            var intProps = baseQualities.GetType().GetField("IntProperties")?.GetValue(baseQualities) as IDictionary;
-            if (intProps is not null) {
+            // PropertyInt.Level = 25, PropertyString.AllegianceName = 47.
+            if (GetMemberValue(baseQualities, "IntProperties") is IDictionary intProps) {
                 foreach (DictionaryEntry entry in intProps) {
-                    if (Convert.ToInt32(entry.Key) == 25) level = Convert.ToInt32(entry.Value);
+                    if (Convert.ToUInt32(entry.Key) == 25u) level = Convert.ToInt32(entry.Value);
                 }
             }
 
-            var stringProps = baseQualities.GetType().GetField("StringProperties")?.GetValue(baseQualities) as IDictionary;
-            if (stringProps is not null) {
+            if (GetMemberValue(baseQualities, "StringProperties") is IDictionary stringProps) {
                 foreach (DictionaryEntry entry in stringProps) {
-                    if (Convert.ToInt32(entry.Key) == 47) allegiance = entry.Value as string ?? "";
+                    if (Convert.ToUInt32(entry.Key) == 47u) allegiance = entry.Value?.ToString() ?? "";
                 }
             }
 
             var (charId, charName) = CurrentCharacter();
+            if (charId == 0 || string.IsNullOrEmpty(charName)) {
+                _log.LogWarning("CharacterSelect: player description received but no current character known; not recording");
+                return;
+            }
+
             _store.Record(charId, charName, level, allegiance);
             _log.LogInformation(
                 "CharacterSelect captured {Name} (0x{Id:X8}): level {Level}, allegiance '{Allegiance}'",
-                charName, level, allegiance);
+                charName, charId, level, allegiance);
         }
         catch (Exception ex) {
             _log.LogError(ex, "CharacterSelect: failed to capture player description");
         }
+    }
+
+    /// <summary>Reads a field or property by name, whichever exists.</summary>
+    private static object? GetMemberValue(object target, string name) {
+        var t = target.GetType();
+        return t.GetField(name)?.GetValue(target) ?? t.GetProperty(name)?.GetValue(target);
     }
 
     private (uint, string) CurrentCharacter() {

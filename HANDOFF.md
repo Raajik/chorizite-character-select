@@ -9,7 +9,7 @@ Standalone Chorizite **Client-environment** plugin. Replaces the AC plugin's cha
 - Installed to: `C:\Games\Chorizite\plugins\CharacterSelect`
 - Runtime data: `C:\Games\Chorizite\data\CharacterSelect\characters.json`
 - Depends on: AC plugin (`plugins\AC` 0.0.5), Lua 0.0.13, RmlUi 0.0.11, Chorizite 0.0.15 stack.
-- Current version: **0.1.2** · GitHub: https://github.com/Raajik/chorizite-character-select (CI on push/PR; tagging `v<manifest version>` publishes a release zip)
+- Current version: **0.1.3** · GitHub: https://github.com/Raajik/chorizite-character-select (CI on push/PR; tagging `v<manifest version>` publishes a release zip)
 
 ## Validated facts (all from decompiling the installed stack)
 
@@ -31,7 +31,29 @@ Standalone Chorizite **Client-environment** plugin. Replaces the AC plugin's cha
 - `assets/screens/CharSelect.rml`: stock layout + two-line population box (`.world-name` / `.world-population`), per-row `.char-name` / `.char-allegiance` (`<name>`) / `.char-level` (20px gold, right-aligned; `.unknown` shows "Level ?"). Lua `factsFor(id)` calls `csp.Lookup(id)` → JSON → row data. `logDebug()` prints `[CharacterSelect] ...` to the log.
 - Capture path: `OnLogin_PlayerDescription` → read IntProperties[25] + StringProperties[47] → `CurrentCharacter()` (reflection Game.Character.Id/Name) → `CharacterStore.Record`.
 
-## Known issues / TODO (0.1.2)
+## 0.1.3 — capture subscription fix (2026-08-30)
+
+The 0.1.2 user round produced two findings:
+
+1. **The interface the user opened in-game was Chorizite's Plugin Manager UI, and it re-shows stuck after logging out.** The log shows `Showing document PluginManagerUI` right after `Juggernaut: Logged off.`, landing on top of the freshly shown CharSelect screen, and its close control does nothing from there. That is core/PluginManagerUI behavior (same family as the unclickable in-game bar icons, known issue below), aggravated by PluginManagerUI's own bugs: it 404s on `plugin-index/plugins/Juggernaut.json` (Juggernaut is unpublished) and then throws `attempt to compare number with nil` at `manager.lua:203` plus a `MyObservable.ReadObservable` null-key error while rendering details. Workaround: close the plugin manager BEFORE logging out, or restart the client (restart clears it). Nothing to change in this plugin.
+
+2. **Level capture never fired — and could never have.** Every startup logged `failed to subscribe to player description events System.ArgumentException: Cannot bind to the target method because its signature is not compatible with that of the delegate type` at `SubscribeCapture()`. `Delegate.CreateDelegate` requires exact parameter types, but the bridge was `(object sender, EventArgs e)` while the event is `EventHandler<Login_PlayerDescription>` — different args types, so binding was impossible by construction. `characters.json` was never created, so every row would have shown `Level ?` even with an unobstructed view of the screen.
+
+   **Fix:** the bridge is now a generic instance method closed over the args type taken from the delegate itself at runtime:
+
+   ```csharp
+   var argsType = handlerType.GetMethod("Invoke")!.GetParameters()[1].ParameterType;
+   var openBridge = GetType().GetMethod(nameof(OnPlayerDescriptionBridge), BindingFlags.NonPublic | BindingFlags.Instance)!;
+   _playerDescriptionHandler = Delegate.CreateDelegate(handlerType, this, openBridge.MakeGenericMethod(argsType));
+   ```
+
+   Exact-signature match is guaranteed by construction, and binding against the runtime's own `Type` avoids any compile-time/load-context type-identity risk (the csproj does reference the `Chorizite.ACProtocol` NuGet package, but the runtime's delegate type is the only authority that matters). `this` as the bound target also satisfies the WeakEvent keep-alive (Target stays strongly reachable via the plugin instance). The success log line now prints the full handler type, so the next session's log will show the resolved args type explicitly.
+
+   Hardening in the same pass: `BaseQualities`/`IntProperties`/`StringProperties` are read through a field-or-property helper (they were assumed to be fields); property keys compare via `Convert.ToUInt32` (enum backing could be uint); recording is skipped with a warning when `Game.Character` is not yet known; and the capture log line's `{Id:X8}` slot actually receives the character id now (the template had four placeholders but three args, which shifted level/allegiance into the wrong slots).
+
+   Regression coverage: `UiStructureTests.CaptureBridgeBindsTheExactDelegateSignature`.
+
+## Known issues / TODO (0.1.3)
 
 1. **Intro skip not wired**: `TrySkipIntro` only logs `UIFlow.m_instance` availability. To implement: call the backend `GameScreen` setter (ACChoriziteBackend line ~72 → `UIFlow.m_instance->QueueUIMode`) with 268435466 once UIFlow exists — e.g. subscribe `ClientBackend.UIBackend.OnScreenChanged` and force the mode when it lands on IntroUI (268435457). Needs the OnScreenChanged hook (AC plugin's ClientBackend_UIBackend pattern).
 2. **Sound mute not wired**: `ShouldMuteSound(uint)` exists (mutes when curMode ≠ GamePlayUI) but nothing calls it — muting requires an IL/harmony-style hook on `ACChoriziteBackend.PlaySound` or replacing `_audioEngines`. Alternative cheap approach: reflect the private `_audioEngines` dictionary and set each engine's volume to 0 while not in gameplay. Find engine volume API in NAudio (`AudioPlaybackEngine` is from the NAudio.Wrapper in the bootstrapper — check its class for a Volume property).
@@ -53,11 +75,12 @@ cd A:/ai/projects/chorizite-mods/chorizite-character-select
 CHORIZITE_HOME='D:/Games/Chorizite' ./scripts/deploy.sh
 ```
 
-3 structural tests assert on the RML/plugin source (two-line population, row layout, capture+property IDs).
+4 structural tests assert on the RML/plugin source (two-line population, row layout, capture+property IDs, exact-signature capture bridge).
 
-## Test checklist for next user round (0.1.2)
+## Test checklist for next user round (0.1.3)
 
-1. Restart client → Create Character button should now enter character creation (watch for `SetScreen(CharCreate) failed ... retrying` then success via raw value).
-2. Log into a character → log should show `CharacterSelect captured Breeze ...: level 1`; log out → row should show `1` instead of `Level ?`.
-3. Allegiance row shows `<name>` if the server sends PropertyString 47 (most EMU servers do for logged-in chars).
-4. Population line: check format is clean integers and spacing inside the box looks right.
+1. Restart the client so the 0.1.3 DLL loads (0.1.2 cannot capture; verify the DLL was deployed). Startup log should show `CharacterSelect 0.1.3 initialized` AND a `subscribed to OnLogin_PlayerDescription` line whose `(System.EventHandler`1[...Login_PlayerDescription...])` suffix shows the resolved args type, with NO ArgumentException.
+2. Log into a character → log should show `CharacterSelect captured <name> (0x...): level N, allegiance '...'`; `C:\Games\Chorizite\data\CharacterSelect\characters.json` should exist afterwards.
+3. Log out → the character row should show the level number instead of `Level ?` (and the allegiance line when the server sends PropertyString 47).
+4. Population line remains server-dependent (OnWorldInfo) — Unfamiliar Shores showed `0` both times.
+5. Do not open the Plugin Manager UI in-world right before logging out — it re-shows stuck over the CharSelect screen (see 0.1.3 finding 1).

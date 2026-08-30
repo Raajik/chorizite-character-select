@@ -55,6 +55,22 @@ public class ScreenStructureTests {
             "src", "CharacterSelect", "CharacterStore.cs")));
     }
 
+    [Fact]
+    public void CaptureBridgeBindsTheExactDelegateSignature() {
+        var cs = ReadCSharp();
+
+        // The capture delegate cannot name the AC plugin's event-args type at
+        // compile time, so it must close a generic bridge over the type taken
+        // from the delegate itself and bind the plugin as the instance target.
+        // A plain (object, EventArgs) instance bridge throws ArgumentException
+        // ("signature is not compatible") at every startup — the 0.1.2 bug that
+        // meant no character ever recorded a level.
+        Assert.Contains("OnPlayerDescriptionBridge<TArgs>", cs);
+        Assert.Contains("MakeGenericMethod(argsType)", cs);
+        Assert.Contains("Delegate.CreateDelegate(handlerType, this, openBridge.MakeGenericMethod(argsType))", cs);
+        Assert.DoesNotContain("OnPlayerDescriptionBridge(object sender, EventArgs e)", cs);
+    }
+
     private static string ReadCSharp() =>
         File.ReadAllText(Path.GetFullPath(Path.Combine(
             AppContext.BaseDirectory, "..", "..", "..", "..", "..",
