@@ -5,8 +5,9 @@
               font-family: Tahoma;
               height: 100%;
               width: 100%;
-              /* v0.2.0 reskin: pure CSS theme, no dat art dependencies. */
-              decorator: gradient(vertical, #1c3450, #05090f);
+              /* v0.2.1 reskin: layered dark-fantasy gradient (deep steel →
+                 midnight), no dat art. */
+              decorator: gradient(vertical, #2b4a6f, #1a2f47 45%, #071018);
               z-index: -5000;
             }
 
@@ -27,15 +28,19 @@
               display: block;
               position: relative; /* anchor .char-level (absolute) to its row, not the panel */
               height: 42px;
+              margin: 2px 0px 2px 0px;
               padding-left: 6px;
               font-size: 14px;
               font-effect: outline(1px black);
+              background-color: #ffffff10;
+              border-radius: 4px;
+              overflow: hidden;
             }
 
             /* Panel content is 292px tall: 42px rows hold 6 characters. With
                more, compact rows keep every row inside the panel art
                (29px x 10 = 290px). */
-            #panel li.compact { height: 29px; }
+            #panel li.compact { height: 25px; margin: 2px 0px 2px 0px; }
             #panel li.compact .char-name { font-size: 12px; line-height: 15px; }
             #panel li.compact .char-allegiance { font-size: 9px; }
             #panel li.compact .char-level { font-size: 15px; top: 2px; right: 6px; }

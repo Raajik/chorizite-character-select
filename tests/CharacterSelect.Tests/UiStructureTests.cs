@@ -207,8 +207,8 @@ public class ScreenScriptTests {
         // the panel's top-right (the many-characters render bug).
         Assert.Matches(@"#panel li \{[^}]*position: relative", rml);
         // Rows beyond 6 use the compact class so rows stay inside the panel
-        // art (292px content: 42px x 6, or 29px x 10).
-        Assert.Matches(@"#panel li\.compact \{[^}]*height: 29px", rml);
+        // art (292px content: 42px x 6, or 29px incl. margins x 10).
+        Assert.Matches(@"#panel li\.compact \{[^}]*height: 25px", rml);
         Assert.Contains("compact = #state.Characters > 6", rml);
     }
 
